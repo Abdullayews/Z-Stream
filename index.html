@@ -650,7 +650,12 @@ function renderSection(title, movies, sid='') {
 
 function renderSections(movies, cats) {
   document.getElementById('sections').innerHTML = '';
-  if (cat !== 'all') { const f = movies.filter(m => m.genre.toLowerCase().includes(cat)); renderSection(cats.find(c=>c.id===cat)?.name||'Content', f); return; }
+  if (cat !== 'all') { 
+    // Filter movies where the genre name matches the selected category name
+    const f = movies.filter(m => m.genre === cat); 
+    renderSection(cat, f); 
+    return; 
+  }
   const gmap = {}; movies.forEach(m => { if(!gmap[m.genre]) gmap[m.genre]=[]; gmap[m.genre].push(m); });
   Object.entries(gmap).forEach(([g,items]) => renderSection(g, items));
 }
