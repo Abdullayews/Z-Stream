@@ -10,63 +10,23 @@
 <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 <style>
 :root {
-  --void: #000000;
-  --abyss: #050000;
-  --crust: #0A0000;
-  --regolith: #100000;
-  --rust-deep: #5a0a0e;
-  --rust: #8a0c12;
-  --copper: #B00710;
-  --magma: #C40612;
-  --lava: #E50914;
-  --ember: #FF1A1A;
-  --flame: #FF3333;
-  --solar: #FF4D4D;
-  --aurora: #FF6666;
-  --gold: #FBBF24;
-  --honey: #FFD700;
-  --cream: #FFFFFF;
-  --starlight: #FFFFFF;
-  --fog: #E5E5E5;
-  --ash: #A1A1A1;
-  --dust: #717171;
-  --danger: #FF0000;
-  --success: #10b981;
-
-  --bg: var(--void);
-  --bg-elevated: rgba(20, 0, 0, 0.5);
-  --bg-glass: rgba(229, 9, 20, 0.05);
-  --accent: var(--lava);
-  --text: var(--starlight);
-  --text-dim: var(--fog);
-  --border: rgba(229, 9, 20, 0.2);
-  --border-hover: rgba(229, 9, 20, 0.4);
+  --void: #000000; --abyss: #050000; --crust: #0A0000; --regolith: #100000;
+  --rust-deep: #5a0a0e; --rust: #8a0c12; --copper: #B00710; --magma: #C40612;
+  --lava: #E50914; --ember: #FF1A1A; --flame: #FF3333; --solar: #FF4D4D;
+  --aurora: #FF6666; --gold: #FBBF24; --honey: #FFD700; --cream: #FFFFFF;
+  --starlight: #FFFFFF; --fog: #E5E5E5; --ash: #A1A1A1; --dust: #717171;
+  --danger: #FF0000; --success: #10b981;
+  --bg: var(--void); --bg-elevated: rgba(20, 0, 0, 0.5); --bg-glass: rgba(229, 9, 20, 0.05);
+  --accent: var(--lava); --text: var(--starlight); --text-dim: var(--fog);
+  --border: rgba(229, 9, 20, 0.2); --border-hover: rgba(229, 9, 20, 0.4);
 }
-
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html { scroll-behavior: smooth; }
-body {
-  font-family: 'Inter', sans-serif;
-  background: #000000;
-  color: var(--text);
-  min-height: 100vh;
-  overflow-x: hidden;
-  -webkit-font-smoothing: antialiased;
-  line-height: 1.6;
-}
+body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text); min-height: 100vh; overflow-x: hidden; -webkit-font-smoothing: antialiased; }
 
 .atmosphere { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
-.atmosphere::before {
-  content: ''; position: absolute; inset: 0;
-  background: 
-    radial-gradient(ellipse 80% 70% at 15% 50%, rgba(229,9,20,0.15) 0%, transparent 55%),
-    radial-gradient(ellipse 60% 50% at 85% 20%, rgba(255,26,26,0.08) 0%, transparent 50%),
-    radial-gradient(ellipse 50% 60% at 50% 100%, rgba(180,7,16,0.12) 0%, transparent 45%);
-}
-.grain {
-  position: fixed; inset: 0; pointer-events: none; z-index: 9998; opacity: 0.04;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-}
+.atmosphere::before { content: ''; position: absolute; inset: 0; background: radial-gradient(ellipse 80% 70% at 15% 50%, rgba(229,9,20,0.15) 0%, transparent 55%), radial-gradient(ellipse 60% 50% at 85% 20%, rgba(255,26,26,0.08) 0%, transparent 50%); }
+.grain { position: fixed; inset: 0; pointer-events: none; z-index: 9998; opacity: 0.04; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
 .vignette { position: fixed; inset: 0; pointer-events: none; z-index: 1; background: radial-gradient(ellipse 80% 80% at 50% 50%, transparent 30%, rgba(0,0,0,0.9) 100%); }
 
 .login-portal { position: fixed; inset: 0; z-index: 5000; background: #000000; backdrop-filter: blur(20px); display: flex; align-items: center; justify-content: center; }
@@ -78,13 +38,7 @@ body {
 .login-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(229,9,20,0.5); }
 .login-error { color: var(--danger); text-align: center; margin-top: 16px; font-size: 13px; display: none; }
 
-.topbar {
-  position: sticky; top: 0; z-index: 200;
-  background: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(30px) saturate(180%);
-  border-bottom: 1px solid var(--border);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8);
-}
+.topbar { position: sticky; top: 0; z-index: 200; background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(30px) saturate(180%); border-bottom: 1px solid var(--border); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8); }
 .topbar-inner { display: flex; align-items: center; justify-content: space-between; height: 48px; width: 100%; padding: 0 40px; position: relative; }
 .brand { display: flex; align-items: center; cursor: pointer; z-index: 2; }
 .brand-name { font-family: 'Orbitron', sans-serif; font-size: 18px; font-weight: 900; letter-spacing: 4px; color: #FFFFFF; text-transform: uppercase; text-shadow: 0 0 40px rgba(229,9,20,0.5); }
@@ -104,24 +58,7 @@ body {
 .searchbox input:focus { border-color: var(--lava); box-shadow: 0 0 0 3px rgba(229,9,20,0.2); background: rgba(0, 0, 0, 0.8); }
 .searchbox .icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--ash); pointer-events: none; }
 
-/* Live Search Dropdown */
-.search-dropdown { 
-  position: absolute; 
-  top: 100%; 
-  right: 0; 
-  width: 100%; 
-  margin-top: 8px; 
-  background: rgba(10, 0, 0, 0.95); 
-  backdrop-filter: blur(20px); 
-  border: 1px solid var(--border); 
-  border-radius: 16px; 
-  box-shadow: 0 15px 40px rgba(0,0,0,0.8), 0 0 30px rgba(229,9,20,0.1); 
-  max-height: 400px; 
-  overflow-y: auto; 
-  z-index: 100; 
-  padding: 8px;
-  display: none;
-}
+.search-dropdown { position: absolute; top: 100%; right: 0; width: 100%; margin-top: 8px; background: rgba(10, 0, 0, 0.95); backdrop-filter: blur(20px); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 15px 40px rgba(0,0,0,0.8); max-height: 400px; overflow-y: auto; z-index: 100; padding: 8px; display: none; }
 .search-item { display: flex; gap: 12px; padding: 10px; border-radius: 12px; cursor: pointer; transition: background 0.2s; }
 .search-item:hover { background: rgba(229, 9, 20, 0.1); }
 .search-item img { width: 40px; height: 60px; object-fit: cover; border-radius: 6px; background: #111; }
@@ -220,17 +157,20 @@ body {
 .server-btn:hover { background: rgba(229,9,20,0.15); color: var(--text); transform: translateY(-2px); }
 .server-btn.active { background: linear-gradient(135deg, var(--magma), var(--lava)); color: #fff; box-shadow: 0 4px 15px rgba(229,9,20,0.4); }
 
+/* Cache Sync Floating Panel */
+.sync-panel { position: fixed; bottom: 20px; right: 20px; background: rgba(10, 0, 0, 0.9); border: 1px solid var(--border); backdrop-filter: blur(20px); padding: 20px; border-radius: 16px; z-index: 500; box-shadow: 0 10px 30px rgba(0,0,0,0.5); display: none; min-width: 300px; }
+.sync-panel h4 { font-family: 'Orbitron', sans-serif; font-size: 14px; color: var(--lava); margin-bottom: 10px; text-transform: uppercase; }
+.sync-panel p { font-size: 12px; color: var(--fog); margin-bottom: 15px; }
+.sync-btn { width: 100%; padding: 10px; background: var(--lava); border: none; border-radius: 8px; color: #fff; font-weight: 600; cursor: pointer; }
+.sync-btn:hover { background: var(--flame); }
+.sync-btn:disabled { background: var(--ash); cursor: not-allowed; }
+
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: #000; }
 ::-webkit-scrollbar-thumb { background: var(--rust); }
 ::-webkit-scrollbar-thumb:hover { background: var(--lava); }
 
-@media (max-width: 768px) {
-  .topbar-inner { padding: 0 20px; }
-  .navlinks { display: none; }
-  .hero { padding: 32px; }
-  .grid { padding: 0 20px; }
-}
+@media (max-width: 768px) { .topbar-inner { padding: 0 20px; } .navlinks { display: none; } .hero { padding: 32px; } .grid { padding: 0 20px; } }
 </style>
 </head>
 <body>
@@ -252,9 +192,7 @@ body {
 
 <nav class="topbar">
   <div class="topbar-inner">
-    <div class="brand" onclick="switchView('main')">
-      <div class="brand-name">Z-Stream</div>
-    </div>
+    <div class="brand" onclick="switchView('main')"><div class="brand-name">Z-Stream</div></div>
     <div class="navlinks">
       <button class="navlink active" data-view="main" onclick="switchView('main')">Main</button>
       <button class="navlink" data-view="films" onclick="switchView('films')">Films</button>
@@ -287,32 +225,20 @@ body {
       <div class="hero-acts" id="heroActs"></div>
     </div>
   </div>
-
-  <div class="catbar" id="catbar">
-    <div class="catpill active" data-cat="all" onclick="filterCategory('all')">All</div>
-  </div>
-
+  <div class="catbar" id="catbar"><div class="catpill active" data-cat="all" onclick="filterCategory('all')">All</div></div>
   <div id="sections"></div>
-
-  <div class="empty" id="empty" style="display:none;">
-    <h3 id="emptyTitle">Empty</h3>
-    <p id="emptyDesc">Nothing exists here yet.</p>
-  </div>
+  <div class="empty" id="empty" style="display:none;"><h3 id="emptyTitle">Empty</h3><p id="emptyDesc">Nothing exists here yet.</p></div>
 </main>
 
 <!-- Film Playing Page -->
 <div class="portal" id="portal">
   <div class="portal-head">
     <div class="portal-title" id="portalTitle">Now Playing</div>
-    <button class="portal-x" onclick="closePlayer()">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-    </button>
+    <button class="portal-x" onclick="closePlayer()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
   </div>
   <div class="portal-body">
     <div class="vframe">
-      <div class="vplaceholder" id="vplaceholder">
-        <h3>Select a server below to start watching.</h3>
-      </div>
+      <div class="vplaceholder" id="vplaceholder"><h3>Select a server below to start watching.</h3></div>
       <video id="uvideo" controls style="display:none"></video>
     </div>
     <div class="player-info">
@@ -323,26 +249,29 @@ body {
   </div>
 </div>
 
+<!-- Cache Sync Panel -->
+<div class="sync-panel" id="syncPanel">
+  <h4>Database Sync</h4>
+  <p id="syncStatusText">Status: Idle</p>
+  <button class="sync-btn" id="syncBtn" onclick="startSync()">Start Caching TMDB</button>
+</div>
+
 <script>
 const API_BASE = '/api';
 
 // --- AUTH ---
 function checkAuth() {
   if (localStorage.getItem('zs_auth') !== 'true') document.getElementById('loginPortal').style.display = 'flex';
-  else { document.getElementById('loginPortal').style.display = 'none'; init(); }
+  else { document.getElementById('loginPortal').style.display = 'none'; init(); checkSyncStatus(); document.getElementById('syncPanel').style.display = 'block'; }
 }
-
 async function doLogin() {
-  const u = document.getElementById('loginUser').value;
-  const p = document.getElementById('loginPass').value;
+  const u = document.getElementById('loginUser').value, p = document.getElementById('loginPass').value;
   try {
-    const response = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p }) });
-    const data = await response.json();
-    if (data.success) { localStorage.setItem('zs_auth', 'true'); document.getElementById('loginPortal').style.display = 'none'; init(); }
+    const r = await fetch('/api/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({username: u, password: p}) });
+    if ((await r.json()).success) { localStorage.setItem('zs_auth', 'true'); location.reload(); }
     else document.getElementById('loginError').style.display = 'block';
-  } catch (err) { document.getElementById('loginError').style.display = 'block'; }
+  } catch (e) { document.getElementById('loginError').style.display = 'block'; }
 }
-
 function doLogout() { localStorage.removeItem('zs_auth'); location.reload(); }
 
 // --- CACHE ---
@@ -352,15 +281,11 @@ const Cache = {
   add(k, item) { const d = this.get(k); if (!d.find(x => x.id === item.id)) { d.unshift(item); this.set(k, d); } this.updateCounts(); },
   remove(k, id) { this.set(k, this.get(k).filter(x => x.id !== id)); this.updateCounts(); },
   has(k, id) { return this.get(k).some(x => x.id === id); },
-  updateCounts() {
-    document.getElementById('favCount').textContent = this.get('fav').length;
-    document.getElementById('histCount').textContent = this.get('hist').length;
-  }
+  updateCounts() { document.getElementById('favCount').textContent = this.get('fav').length; document.getElementById('histCount').textContent = this.get('hist').length; }
 };
 Cache.updateCounts();
 
-let view = 'main', cat = 'all', allMovies = [], allCats = [], featured = null;
-let currentMovie = null, hls = null;
+let view = 'main', cat = 'all', allMovies = [], allCats = [], featured = null, currentMovie = null, hls = null;
 const stage = document.getElementById('stage');
 
 function switchView(v) {
@@ -371,143 +296,82 @@ function switchView(v) {
   document.getElementById('catbar').style.display = 'none';
   document.getElementById('sections').innerHTML = '';
   document.getElementById('empty').style.display = 'none';
+  if (v === 'main') stage.classList.remove('pad-top'); else stage.classList.add('pad-top');
   
-  if (v === 'main') stage.classList.remove('pad-top');
-  else stage.classList.add('pad-top');
-  
-  if (view === 'main') {
-    document.getElementById('catbar').style.display = 'flex';
-    if (featured) renderHero(featured);
-    renderSections(allMovies, allCats);
-  } else if (view === 'favorites') {
-    const favs = Cache.get('fav');
-    if (favs.length === 0) showEmpty('Favorites Empty', 'Click the heart icon on movie cards to add them here.');
-    else renderSection('Favorites', favs);
-  } else if (view === 'history') {
-    const hist = Cache.get('hist');
-    if (hist.length === 0) showEmpty('History Empty', 'You haven\'t watched anything yet.');
-    else renderSection('Recently Watched', hist);
-  } else {
-    const filtered = allMovies.filter(m => m.type === view);
-    if (filtered.length === 0) showEmpty('No Content', `No ${view} found.`);
-    else renderSection(null, filtered); 
-  }
+  if (view === 'main') { document.getElementById('catbar').style.display = 'flex'; if (featured) renderHero(featured); renderSections(allMovies, allCats); }
+  else if (view === 'favorites') { const f = Cache.get('fav'); if (f.length === 0) showEmpty('Favorites Empty', 'Click the heart icon...'); else renderSection('Favorites', f); }
+  else if (view === 'history') { const h = Cache.get('hist'); if (h.length === 0) showEmpty('History Empty', 'You haven\'t watched...'); else renderSection('Recently Watched', h); }
+  else { const f = allMovies.filter(m => m.type === v); if (f.length === 0) showEmpty('No Content', `No ${v} found.`); else renderSection(null, f); }
 }
-
-function showEmpty(t, d) {
-  document.getElementById('emptyTitle').textContent = t;
-  document.getElementById('emptyDesc').textContent = d;
-  document.getElementById('empty').style.display = 'flex';
-}
+function showEmpty(t, d) { document.getElementById('emptyTitle').textContent = t; document.getElementById('emptyDesc').textContent = d; document.getElementById('empty').style.display = 'flex'; }
 
 // --- LIVE SEARCH ---
-let searchTimeout;
+let st;
 async function handleSearch() {
-  clearTimeout(searchTimeout);
-  const q = document.getElementById('searchInput').value.trim();
-  const dropdown = document.getElementById('searchDropdown');
-  
-  if (q.length < 2) { dropdown.style.display = 'none'; return; }
-  
-  searchTimeout = setTimeout(async () => {
+  clearTimeout(st); const q = document.getElementById('searchInput').value.trim(), dd = document.getElementById('searchDropdown');
+  if (q.length < 2) { dd.style.display = 'none'; return; }
+  st = setTimeout(async () => {
     try {
-      const r = await fetch(`${API_BASE}/search?q=${encodeURIComponent(q)}`);
-      const results = await r.json();
-      if (results.length > 0) {
-        dropdown.innerHTML = results.map(m => `
-          <div class="search-item" onclick="openPlayer('${m.title.replace(/'/g, "\'")}'); document.getElementById('searchInput').value=''; document.getElementById('searchDropdown').style.display='none';">
-            <img src="${m.poster}" alt="${m.title}">
-            <div class="search-item-info">
-              <div class="search-item-title">${m.title}</div>
-              <div class="search-item-meta">${m.year} • ${m.genre} • ${m.rating}</div>
-            </div>
-          </div>
-        `).join('');
-        dropdown.style.display = 'block';
-      } else {
-        dropdown.innerHTML = '<div class="search-item"><div class="search-item-info"><div class="search-item-title">No results found</div></div></div>';
-        dropdown.style.display = 'block';
-      }
-    } catch (e) { console.error(e); }
+      const r = await fetch(`${API_BASE}/search?q=${encodeURIComponent(q)}`); const res = await r.json();
+      if (res.length > 0) { dd.innerHTML = res.map(m => `<div class="search-item" onclick="openPlayer(${m.id}); document.getElementById('searchInput').value=''; document.getElementById('searchDropdown').style.display='none';"><img src="${m.poster}" alt="${m.title}"><div class="search-item-info"><div class="search-item-title">${m.title}</div><div class="search-item-meta">${m.year} • ${m.genre} • ${m.rating}</div></div></div>`).join(''); dd.style.display = 'block'; }
+      else { dd.innerHTML = '<div class="search-item"><div class="search-item-info"><div class="search-item-title">No results found</div></div></div>'; dd.style.display = 'block'; }
+    } catch (e) {}
   }, 300);
 }
+document.addEventListener('click', (e) => { if (!e.target.closest('.searchbox')) document.getElementById('searchDropdown').style.display = 'none'; });
 
-// Hide dropdown when clicking outside
-document.addEventListener('click', (e) => {
-  if (!e.target.closest('.searchbox')) document.getElementById('searchDropdown').style.display = 'none';
-});
-
-// --- APIs ---
-async function fetchMovies() {
-  try { const r = await fetch(`${API_BASE}/movies`); return r.ok ? r.json() : []; } catch (e) { return []; }
-}
-async function fetchCats() {
-  try { const r = await fetch(`${API_BASE}/categories`); return r.ok ? r.json() : [{id:'all', name:'All'}]; } catch (e) { return [{id:'all', name:'All'}]; }
-}
-async function fetchSources(id) {
-  try { const r = await fetch(`${API_BASE}/sources?id=${id}`); return r.ok ? r.json() : []; } catch (e) { return []; }
-}
+// --- APIS ---
+async function fetchMovies() { try { const r = await fetch(`${API_BASE}/movies`); return r.ok ? r.json() : []; } catch (e) { return []; } }
+async function fetchCats() { try { const r = await fetch(`${API_BASE}/categories`); return r.ok ? r.json() : [{id:'all', name:'All'}]; } catch (e) { return [{id:'all', name:'All'}]; } }
+async function fetchSources(id) { try { const r = await fetch(`${API_BASE}/sources?id=${id}`); return r.ok ? r.json() : []; } catch (e) { return []; } }
 
 function renderHero(m) {
   document.getElementById('heroBackdrop').style.backgroundImage = `url('${m.backdrop}')`;
   document.getElementById('heroTitle').textContent = m.title.toUpperCase();
   document.getElementById('heroMeta').innerHTML = `<span class="star">⭐ ${m.rating}</span><span class="dot"></span><span>${m.year}</span><span class="dot"></span><span>${m.genre}</span>`;
   document.getElementById('heroDesc').textContent = m.overview;
-  const safe = m.title.replace(/'/g, "\'");
-  document.getElementById('heroActs').innerHTML = `<button class="btn btn-lava" onclick="openPlayer('${safe}')">Watch Now</button><button class="btn btn-ghost" onclick="toggleFav(${m.id})">${Cache.has('fav',m.id)?'In Favorites':'Add to Favorites'}</button>`;
+  document.getElementById('heroActs').innerHTML = `<button class="btn btn-lava" onclick="openPlayer(${m.id})">Watch Now</button><button class="btn btn-ghost" onclick="toggleFav(${m.id})">${Cache.has('fav',m.id)?'In Favorites':'Add to Favorites'}</button>`;
   document.getElementById('hero').classList.add('visible');
 }
-
-function renderCats(cats) {
-  document.getElementById('catbar').innerHTML = cats.map(c => `<div class="catpill ${c.id==='all'?'active':''}" data-cat="${c.id}" onclick="filterCategory('${c.id}')">${c.name}</div>`).join('');
-}
-
-function skel(count=6) { return Array(count).fill(0).map(()=>`<div class="skel-card"><div class="skel-img"></div><div class="skel-line"></div><div class="skel-line s"></div></div>`).join(''); }
-
+function renderCats(cats) { document.getElementById('catbar').innerHTML = cats.map(c => `<div class="catpill ${c.id==='all'?'active':''}" data-cat="${c.id}" onclick="filterCategory('${c.id}')">${c.name}</div>`).join(''); }
+function skel(c=6) { return Array(c).fill(0).map(()=>`<div class="skel-card"><div class="skel-img"></div><div class="skel-line"></div><div class="skel-line s"></div></div>`).join(''); }
 function card(m) {
-  const safe = m.title.replace(/'/g,"\'");
   const fav = Cache.has('fav', m.id);
-  return `<div class="card"><div style="position:relative;overflow:hidden;" onclick="openPlayer('${safe}')"><img src="${m.poster}" class="card-img" alt="${m.title}" loading="lazy"><div class="card-badges"><div class="badge-rate">${m.rating}</div></div><div class="card-overlay"><div class="playbtn"><svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg></div></div></div><button class="card-fav" onclick="event.stopPropagation();toggleFav(${m.id})"><svg width="14" height="14" viewBox="0 0 24 24" fill="${fav?'currentColor':'none'}" stroke="currentColor" stroke-width="2.2"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg></button><div class="card-info"><div class="card-title">${m.title}</div><div class="card-meta"><span>${m.year}</span><span class="sep"></span><span>${m.genre}</span></div></div></div>`;
+  return `<div class="card"><div style="position:relative;overflow:hidden;" onclick="openPlayer(${m.id})"><img src="${m.poster}" class="card-img" alt="${m.title}" loading="lazy"><div class="card-badges"><div class="badge-rate">${m.rating}</div></div><div class="card-overlay"><div class="playbtn"><svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg></div></div></div><button class="card-fav" onclick="event.stopPropagation();toggleFav(${m.id})"><svg width="14" height="14" viewBox="0 0 24 24" fill="${fav?'currentColor':'none'}" stroke="currentColor" stroke-width="2.2"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg></button><div class="card-info"><div class="card-title">${m.title}</div><div class="card-meta"><span>${m.year}</span><span class="sep"></span><span>${m.genre}</span></div></div></div>`;
 }
-
 function renderSection(title, movies, sid='') {
   const id = sid || 's_' + Math.random().toString(36).substr(2, 9);
-  const headerHtml = title ? `<div class="sec-head"><h2 class="sec-title">${title}</h2></div>` : '';
-  document.getElementById('sections').insertAdjacentHTML('beforeend', `${headerHtml}<div class="grid" id="${id}">${movies.length>0?movies.map(card).join(''):skel()}</div>`);
+  const hh = title ? `<div class="sec-head"><h2 class="sec-title">${title}</h2></div>` : '';
+  document.getElementById('sections').insertAdjacentHTML('beforeend', `${hh}<div class="grid" id="${id}">${movies.length>0?movies.map(card).join(''):skel()}</div>`);
 }
-
 function renderSections(movies, cats) {
   document.getElementById('sections').innerHTML = '';
   if (cat !== 'all') { const f = movies.filter(m => m.genre === cat); renderSection(cat, f); return; }
   const gmap = {}; movies.forEach(m => { if(!gmap[m.genre]) gmap[m.genre]=[]; gmap[m.genre].push(m); });
   Object.entries(gmap).forEach(([g,items]) => renderSection(g, items));
 }
-
-function filterCategory(cid) {
-  cat = cid;
-  document.querySelectorAll('.catpill').forEach(t => t.classList.remove('active'));
-  document.querySelector(`.catpill[data-cat="${cid}"]`)?.classList.add('active');
-  if (view === 'main') renderSections(allMovies, allCats);
-}
-
+function filterCategory(cid) { cat = cid; document.querySelectorAll('.catpill').forEach(t => t.classList.remove('active')); document.querySelector(`.catpill[data-cat="${cid}"]`)?.classList.add('active'); if (view === 'main') renderSections(allMovies, allCats); }
 function toggleFav(id) {
-  const m = allMovies.find(x => x.id === id);
-  if (!m) return;
+  const m = allMovies.find(x => x.id === id); if (!m) return;
   if (Cache.has('fav', id)) Cache.remove('fav', id); else Cache.add('fav', m);
   if (view === 'favorites') switchView('favorites');
   else if (view === 'main') { if (featured && featured.id === id) renderHero(featured); renderSections(allMovies, allCats); }
   if (currentMovie && currentMovie.id === id) updatePlayerFavBtn();
 }
 
-// --- PLAYER ---
+// --- PLAYER LOGIC ---
 let dynamicSources = [];
-
-async function openPlayer(title) {
-  currentMovie = allMovies.find(x => x.title === title);
+async function openPlayer(id) {
+  // Fetch detailed info from TiDB using the TMDB ID
+  try {
+    const r = await fetch(`${API_BASE}/movie/${id}`);
+    if (r.ok) currentMovie = await r.json();
+  } catch (e) {}
+  
   if (currentMovie) Cache.add('hist', currentMovie);
   
-  document.getElementById('nowPlayingTitle').textContent = title;
-  document.getElementById('portalTitle').textContent = title.toUpperCase();
+  document.getElementById('nowPlayingTitle').textContent = currentMovie?.title || 'Unknown';
+  document.getElementById('portalTitle').textContent = (currentMovie?.title || 'Unknown').toUpperCase();
   document.getElementById('portal').classList.add('on');
   document.body.style.overflow = 'hidden';
   
@@ -515,56 +379,61 @@ async function openPlayer(title) {
   v.pause(); v.src = ''; v.style.display = 'none';
   document.getElementById('vplaceholder').style.display = 'block';
   
-  dynamicSources = await fetchSources(currentMovie?.id);
-
+  dynamicSources = await fetchSources(id);
   document.getElementById('nodelist').innerHTML = dynamicSources.length > 0 
     ? dynamicSources.map((s, i) => `<div class="server-btn ${i===0?'active':''}" onclick="selSrc(this, '${s.name}')">${s.name}</div>`).join('')
-    : '<p style="color: var(--ash); text-align: center; grid-column: 1/-1;">No sources found for this title.</p>';
-
+    : '<p style="color: var(--ash); text-align: center; grid-column: 1/-1;">No sources found.</p>';
   if (dynamicSources.length > 0) selSrc(document.querySelector('.server-btn'), dynamicSources[0].name);
   updatePlayerFavBtn();
 }
-
-function updatePlayerFavBtn() {
-  const btn = document.getElementById('playerFavBtn');
-  if (!currentMovie) return;
-  const isFav = Cache.has('fav', currentMovie.id);
-  btn.innerHTML = isFav ? 'Favorited' : 'Favorite';
-}
-
+function updatePlayerFavBtn() { document.getElementById('playerFavBtn').innerHTML = (currentMovie && Cache.has('fav', currentMovie.id)) ? 'Favorited' : 'Favorite'; }
 function togglePlayerFav() { if (currentMovie) toggleFav(currentMovie.id); }
-
-function selSrc(btn, serverName) {
+function selSrc(btn, name) {
   if (!btn) return;
   document.querySelectorAll('.server-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
-  
-  const source = dynamicSources.find(s => s.name === serverName);
-  if (!source) return;
-
+  const source = dynamicSources.find(s => s.name === name); if (!source) return;
   const video = document.getElementById('uvideo');
-  document.getElementById('vplaceholder').style.display = 'none';
-  video.style.display = 'block';
-
+  document.getElementById('vplaceholder').style.display = 'none'; video.style.display = 'block';
   if (hls) { hls.destroy(); hls = null; }
-
   if (source.url.includes('.m3u8')) {
-    if (Hls.isSupported()) {
-      hls = new Hls(); hls.loadSource(source.url); hls.attachMedia(video);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => video.play());
-    } else if (video.canPlayType('application/vnd.apple.mpegurl')) { video.src = source.url; video.play(); }
+    if (Hls.isSupported()) { hls = new Hls(); hls.loadSource(source.url); hls.attachMedia(video); hls.on(Hls.Events.MANIFEST_PARSED, () => video.play()); }
+    else if (video.canPlayType('application/vnd.apple.mpegurl')) { video.src = source.url; video.play(); }
   } else { video.src = source.url; video.play(); }
 }
-
-function closePlayer() {
-  document.getElementById('portal').classList.remove('on');
-  document.body.style.overflow = '';
-  const v = document.getElementById('uvideo');
-  v.pause(); v.src = '';
-  if (hls) { hls.destroy(); hls = null; }
-}
-
+function closePlayer() { document.getElementById('portal').classList.remove('on'); document.body.style.overflow = ''; const v = document.getElementById('uvideo'); v.pause(); v.src = ''; if (hls) { hls.destroy(); hls = null; } currentMovie = null; }
 document.addEventListener('keydown', e => { if (e.key==='Escape') closePlayer(); });
+
+// --- SYNC ENGINE UI ---
+async function startSync() {
+  document.getElementById('syncBtn').disabled = true;
+  document.getElementById('syncBtn').innerText = 'Syncing...';
+  await fetch(`${API_BASE}/start-sync`);
+  checkSyncStatus();
+}
+let syncInterval;
+async function checkSyncStatus() {
+  clearInterval(syncInterval);
+  syncInterval = setInterval(async () => {
+    try {
+      const r = await fetch(`${API_BASE}/sync-status`);
+      const data = await r.json();
+      const btn = document.getElementById('syncBtn');
+      const txt = document.getElementById('syncStatusText');
+      
+      if (data.isSyncing) {
+        txt.innerHTML = `Status: Syncing <b>${data.category}</b><br>Page: ${data.currentPage}<br>Cached Items: ${data.totalItems}`;
+        btn.disabled = true;
+        btn.innerText = 'Syncing...';
+      } else {
+        txt.innerHTML = `Status: Idle / Complete<br>Cached Items: ${data.totalItems}`;
+        btn.disabled = false;
+        btn.innerText = 'Start Caching TMDB';
+        // Optional: clearInterval(syncInterval); // stop polling when idle
+      }
+    } catch (e) {}
+  }, 2000); // Poll every 2 seconds
+}
 
 async function init() {
   document.getElementById('sections').innerHTML = `<div class="sec-head"><h2 class="sec-title">Loading Database...</h2></div><div class="grid">${skel(6)}</div>`;
