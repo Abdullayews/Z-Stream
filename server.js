@@ -1,7 +1,7 @@
 const express = require('express');
 const mysql = require('mysql2/promise');
 const axios = require('axios');
-const cheerio = require('cheerio'); // Added for deep scraping
+const cheerio = require('cheerio');
 const path = require('path');
 const fs = require('fs');
 require('dotenv').config();
@@ -31,6 +31,13 @@ const genreMap = {
   18: 'Drama', 14: 'Fantasy', 27: 'Horror', 9648: 'Mystery', 878: 'Sci-Fi', 
   53: 'Thriller', 10752: 'War', 37: 'Western', 10749: 'Romance', 10402: 'Music', 
   99: 'Documentary', 10751: 'Family'
+};
+
+// Map categories to table names
+const tableMap = {
+  'movies': 'movies_cache',
+  'series': 'series_cache',
+  'anime': 'anime_cache'
 };
 
 // --- Auth Route ---
@@ -66,6 +73,7 @@ async function runSync() {
   for (const cat of categories) {
     if (!syncState.isSyncing) break;
     syncState.category = cat.name;
+    const tableName = tableMap[cat.name];
     let page = 1, hasMore = true;
     
     while(hasMore && syncState.isSyncing) {
@@ -75,7 +83,8 @@ async function runSync() {
         if (items.length === 0) { hasMore = false; break; }
 
         const pageIds = items.map(m => m.id);
-        const [existingRows] = await pool.query('SELECT id FROM movies_cache WHERE id IN (?)', [pageIds]);
+        const [existingRows] = await pool.query(`SELECT tmdb_id FROM ${tableName} WHERE tmdb_id IN (?)`, [pageIds]);
+        
         if (existingRows.length === items.length) {
           console.log(`Page ${page} of ${cat.name} is fully cached. Stopping sync.`);
           hasMore = false; break;
@@ -87,13 +96,12 @@ async function runSync() {
           const title = (m.title || m.name || '').replace(/'/g, "''");
           const overview = (m.overview || '').replace(/'/g, "''");
           const year = new Date(m.release_date || m.first_air_date || '2000').getFullYear();
-          const type = cat.name === 'movies' ? 'films' : cat.name;
           
           await pool.query(
-            `INSERT INTO movies_cache (id, type, title, year, rating, genre, poster, backdrop, overview) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) 
-             ON DUPLICATE KEY UPDATE id=id`,
-            [m.id, type, title, year, m.vote_average || 0, genreName, m.poster_path ? `${TMDB_IMG}${m.poster_path}` : '', m.backdrop_path ? `${TMDB_BACKDROP}${m.backdrop_path}` : '', overview]
+            `INSERT INTO ${tableName} (tmdb_id, title, year, rating, genre, poster, backdrop, overview) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?) 
+             ON DUPLICATE KEY UPDATE tmdb_id=tmdb_id`,
+            [m.id, title, year, m.vote_average || 0, genreName, m.poster_path ? `${TMDB_IMG}${m.poster_path}` : '', m.backdrop_path ? `${TMDB_BACKDROP}${m.backdrop_path}` : '', overview]
           );
           syncState.totalItems++;
         }
@@ -112,31 +120,60 @@ async function runSync() {
   console.log('TMDB Sync Complete!');
 }
 
-// --- Get Movies from TiDB ---
+// --- Get Movies (Only items <= 2 years old) ---
 app.get('/api/movies', async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT * FROM movies_cache ORDER BY rating DESC LIMIT 500');
+    const currentYear = new Date().getFullYear();
+    const minYear = currentYear - 2;
+    
+    // Fetch across all 3 tables, aliasing tmdb_id as id for frontend compatibility
+    const query = `
+      SELECT 'films' as type, tmdb_id AS id, title, year, rating, genre, poster, backdrop, overview FROM movies_cache WHERE year >= ?
+      UNION ALL
+      SELECT 'series' as type, tmdb_id AS id, title, year, rating, genre, poster, backdrop, overview FROM series_cache WHERE year >= ?
+      UNION ALL
+      SELECT 'anime' as type, tmdb_id AS id, title, year, rating, genre, poster, backdrop, overview FROM anime_cache WHERE year >= ?
+      ORDER BY rating DESC LIMIT 500
+    `;
+    const [rows] = await pool.query(query, [minYear, minYear, minYear]);
     res.json(rows);
-  } catch (err) { res.status(500).json({ error: 'Database error' }); }
+  } catch (err) { 
+    console.error(err);
+    res.status(500).json({ error: 'Database error' }); 
+  }
 });
 
+// --- Get Single Item Details ---
 app.get('/api/movie/:id', async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT * FROM movies_cache WHERE id = ?', [req.params.id]);
+    const id = req.params.id;
+    const query = `
+      SELECT 'films' as type, tmdb_id AS id, title, year, rating, genre, poster, backdrop, overview FROM movies_cache WHERE tmdb_id = ?
+      UNION ALL
+      SELECT 'series' as type, tmdb_id AS id, title, year, rating, genre, poster, backdrop, overview FROM series_cache WHERE tmdb_id = ?
+      UNION ALL
+      SELECT 'anime' as type, tmdb_id AS id, title, year, rating, genre, poster, backdrop, overview FROM anime_cache WHERE tmdb_id = ?
+    `;
+    const [rows] = await pool.query(query, [id, id, id]);
     if (rows.length > 0) res.json(rows[0]);
     else res.status(404).json({ error: 'Not cached yet' });
   } catch (err) { res.status(500).json({ error: 'Database error' }); }
 });
 
-// --- Perfected Search System ---
+// --- Perfected Search System (Searches ALL years in TiDB) ---
 app.get('/api/search', async (req, res) => {
   const q = req.query.q;
   if (!q) return res.json([]);
   try {
-    const [rows] = await pool.query(
-      'SELECT * FROM movies_cache WHERE title LIKE ? OR genre LIKE ? OR year LIKE ? LIMIT 20', 
-      [`%${q}%`, `%${q}%`, `%${q}%`]
-    );
+    const query = `
+      SELECT 'films' as type, tmdb_id AS id, title, year, rating, genre, poster, backdrop, overview FROM movies_cache WHERE title LIKE ?
+      UNION ALL
+      SELECT 'series' as type, tmdb_id AS id, title, year, rating, genre, poster, backdrop, overview FROM series_cache WHERE title LIKE ?
+      UNION ALL
+      SELECT 'anime' as type, tmdb_id AS id, title, year, rating, genre, poster, backdrop, overview FROM anime_cache WHERE title LIKE ?
+      LIMIT 20
+    `;
+    const [rows] = await pool.query(query, [`%${q}%`, `%${q}%`, `%${q}%`]);
     res.json(rows);
   } catch (err) { res.status(500).json([]); }
 });
@@ -150,20 +187,30 @@ app.get('/api/categories', (req, res) => {
   ]);
 });
 
-// --- MULTI-THREADED DEEP SEARCH SOURCES ENGINE ---
+// --- Advanced Dynamic Sources Engine ---
 app.get('/api/sources', async (req, res) => {
   const movieId = req.query.id;
-  let mediaType = 'films';
+  let mediaType = 'movie';
 
+  // Determine if it's a TV show or Anime to hit the correct TMDB endpoint
   try {
-    const [rows] = await pool.query('SELECT type FROM movies_cache WHERE id = ?', [movieId]);
-    if (rows.length > 0) mediaType = rows[0].type;
+    const [rows] = await pool.query(`
+      SELECT 'movie' as type FROM movies_cache WHERE tmdb_id = ?
+      UNION ALL
+      SELECT 'series' as type FROM series_cache WHERE tmdb_id = ?
+      UNION ALL
+      SELECT 'anime' as type FROM anime_cache WHERE tmdb_id = ?
+    `, [movieId, movieId, movieId]);
+    
+    if (rows.length > 0) {
+      mediaType = rows[0].type;
+      if (mediaType === 'series' || mediaType === 'anime') mediaType = 'tv';
+    }
   } catch (e) {}
 
-  const isTV = mediaType === 'series' || mediaType === 'anime';
+  const isTV = mediaType === 'tv';
   const tmdbEndpoint = isTV ? 'tv' : 'movie';
 
-  // 1. Fetch IMDb ID from TMDB
   let imdbId = null;
   try {
     const tmdbRes = await axios.get(`${TMDB_BASE}/${tmdbEndpoint}/${movieId}/external_ids?api_key=${TMDB_KEY}`);
@@ -171,11 +218,8 @@ app.get('/api/sources', async (req, res) => {
   } catch (e) { console.error("Failed to fetch IMDb ID"); }
 
   const dynamicSources = [];
-
-  // Create an array of promises to search multiple databases at once
   const searchPromises = [];
 
-  // SEARCH ENGINE 1: 2Embed API (Direct Cyberlockers)
   if (imdbId) {
     searchPromises.push(
       axios.get(`https://www.2embed.cc/ajax/embed/list?id=${imdbId}${isTV ? '&s=1&e=1' : ''}`, {
@@ -195,7 +239,6 @@ app.get('/api/sources', async (req, res) => {
     );
   }
 
-  // SEARCH ENGINE 2: VidSrc.to API (Scraping for direct Filemoon/Voe links)
   searchPromises.push(
     axios.get(`https://vidsrc.to/ajax/embed/list?id=${movieId}`, {
       headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://vidsrc.to/' }
@@ -205,21 +248,14 @@ app.get('/api/sources', async (req, res) => {
         const name = $(el).text().trim();
         const url = $(el).attr('data-embed') || '';
         if (url && (url.includes('filemoon') || url.includes('voe') || url.includes('streamtape') || url.includes('vidplay') || url.includes('mixdrop'))) {
-          dynamicSources.push({
-            name: `VidSrc - ${name}`,
-            url: url,
-            status: "online",
-            ping: Math.floor(Math.random() * 100) + 20
-          });
+          dynamicSources.push({ name: `VidSrc - ${name}`, url: url, status: "online", ping: Math.floor(Math.random() * 100) + 20 });
         }
       });
     }).catch(() => {})
   );
 
-  // Wait for all search engines to finish
   await Promise.all(searchPromises);
 
-  // 3. Add Static Meta-Aggregators from sources.json as Fallbacks
   sourcesConfig.forEach(src => {
     let url = `${src.base_url}${movieId}`;
     if (isTV) {
@@ -237,4 +273,4 @@ app.get('/api/sources', async (req, res) => {
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Z-Stream Deep Search Engine running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Z-Stream server running on port ${PORT}`));
