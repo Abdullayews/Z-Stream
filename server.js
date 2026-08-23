@@ -41,24 +41,18 @@ app.post('/api/login', async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- Sync Engine State ---
-let syncState = { isSyncing: false, currentPage: 0, totalItems: 0, category: 'movies' };
+// --- Background Sync Engine ---
+let syncState = { isSyncing: false };
 
 app.get('/api/start-sync', async (req, res) => {
-  if (syncState.isSyncing) return res.json({ msg: 'Already syncing', ...syncState });
+  if (syncState.isSyncing) return res.json({ msg: 'Already syncing in background' });
   
   syncState.isSyncing = true;
-  syncState.currentPage = 0;
-  syncState.totalItems = 0;
-  runSync();
-  res.json({ msg: 'Sync started', ...syncState });
+  runBackgroundSync(); // Run asynchronously without blocking the response
+  res.json({ msg: 'Background sync started' });
 });
 
-app.get('/api/sync-status', (req, res) => {
-  res.json(syncState);
-});
-
-async function runSync() {
+async function runBackgroundSync() {
   const categories = [
     { name: 'movies', url: `${TMDB_BASE}/discover/movie?api_key=${TMDB_KEY}&sort_by=popularity.desc&page=` },
     { name: 'series', url: `${TMDB_BASE}/discover/tv?api_key=${TMDB_KEY}&sort_by=popularity.desc&page=` },
@@ -66,16 +60,28 @@ async function runSync() {
   ];
 
   for (const cat of categories) {
-    syncState.category = cat.name;
     let page = 1;
     let hasMore = true;
     
     while(hasMore && syncState.isSyncing) {
       try {
         const response = await axios.get(`${cat.url}${page}`);
-        if (response.data.results.length === 0) { hasMore = false; break; }
+        const items = response.data.results;
+        if (items.length === 0) { hasMore = false; break; }
 
-        for (const m of response.data.results) {
+        // Check if this page is already fully cached in TiDB
+        const ids = items.map(m => m.id);
+        const [existing] = await pool.query(`SELECT id FROM movies_cache WHERE id IN (?)`, [ids]);
+        
+        // If all items on this page are already in the database, stop syncing this category
+        if (existing.length === items.length) {
+          console.log(`[${cat.name}] Page ${page} fully cached. Stopping sync for this category.`);
+          hasMore = false;
+          break;
+        }
+
+        // Otherwise, insert/update the items
+        for (const m of items) {
           const genreId = m.genre_ids && m.genre_ids.length > 0 ? m.genre_ids[0] : null;
           const genreName = genreId ? (genreMap[genreId] || 'Unknown') : 'Unknown';
           const title = (m.title || m.name || '').replace(/'/g, "''");
@@ -89,25 +95,24 @@ async function runSync() {
              ON DUPLICATE KEY UPDATE id=id`,
             [m.id, type, title, year, m.vote_average || 0, genreName, m.poster_path ? `${TMDB_IMG}${m.poster_path}` : '', m.backdrop_path ? `${TMDB_BACKDROP}${m.backdrop_path}` : '', overview]
           );
-          syncState.totalItems++;
         }
         
-        syncState.currentPage = page;
         page++;
         
-        // TMDB Limit Handler: 30 pages per 20 seconds
+        // TMDB Limit: 30 pages per 20 seconds
         if (page % 30 === 0) {
           await new Promise(resolve => setTimeout(resolve, 20000)); // Wait 20 sec
         } else {
-          await new Promise(resolve => setTimeout(resolve, 250)); // Small delay
+          await new Promise(resolve => setTimeout(resolve, 250)); // Small delay to prevent spamming
         }
       } catch (err) {
         console.error(`Error on ${cat.name} page ${page}:`, err.message);
-        hasMore = false; // Stop if error
+        hasMore = false; 
       }
     }
   }
   syncState.isSyncing = false;
+  console.log('Background sync complete or stopped.');
 }
 
 // --- Get Movies from TiDB ---
@@ -118,7 +123,7 @@ app.get('/api/movies', async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Database error' }); }
 });
 
-// --- Get Single Movie Details by ID from TiDB ---
+// --- Get Single Movie Details by ID ---
 app.get('/api/movie/:id', async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT * FROM movies_cache WHERE id = ?', [req.params.id]);
