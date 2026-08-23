@@ -20,7 +20,6 @@ const pool = mysql.createPool({
   ssl: { rejectUnauthorized: true }
 });
 
-// --- TMDB Config ---
 const TMDB_BASE = 'https://api.themoviedb.org/3';
 const TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
 const TMDB_BACKDROP = 'https://image.tmdb.org/t/p/original';
@@ -39,87 +38,103 @@ app.post('/api/login', async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT * FROM users WHERE username = ? AND password = ?', [username, password]);
     res.json({ success: rows.length > 0 });
-  } catch (err) {
-    res.status(500).json({ success: false });
-  }
+  } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- Sync Route (Trigger this once to fill TiDB) ---
-app.get('/api/sync', async (req, res) => {
-  try {
-    res.send('Sync started in background. Check server logs. Refresh the site in 2 minutes.');
-    
+// --- Sync Engine State ---
+let syncState = { isSyncing: false, currentPage: 0, totalItems: 0, category: 'movies' };
+
+app.get('/api/start-sync', async (req, res) => {
+  if (syncState.isSyncing) return res.json({ msg: 'Already syncing', ...syncState });
+  
+  syncState.isSyncing = true;
+  syncState.currentPage = 0;
+  syncState.totalItems = 0;
+  runSync();
+  res.json({ msg: 'Sync started', ...syncState });
+});
+
+app.get('/api/sync-status', (req, res) => {
+  res.json(syncState);
+});
+
+async function runSync() {
+  const categories = [
+    { name: 'movies', url: `${TMDB_BASE}/discover/movie?api_key=${TMDB_KEY}&sort_by=popularity.desc&page=` },
+    { name: 'series', url: `${TMDB_BASE}/discover/tv?api_key=${TMDB_KEY}&sort_by=popularity.desc&page=` },
+    { name: 'anime', url: `${TMDB_BASE}/discover/tv?api_key=${TMDB_KEY}&with_genres=16&with_original_language=ja&sort_by=popularity.desc&page=` }
+  ];
+
+  for (const cat of categories) {
+    syncState.category = cat.name;
     let page = 1;
     let hasMore = true;
     
-    // Fetch Movies, TV, and Anime up to 50 pages each (1500 items each)
-    while(page <= 50) {
-      const [mRes, tRes, aRes] = await Promise.all([
-        axios.get(`${TMDB_BASE}/trending/movie/week?api_key=${TMDB_KEY}&page=${page}`),
-        axios.get(`${TMDB_BASE}/trending/tv/week?api_key=${TMDB_KEY}&page=${page}`),
-        axios.get(`${TMDB_BASE}/discover/tv?api_key=${TMDB_KEY}&with_genres=16&with_original_language=ja&sort_by=popularity.desc&page=${page}`)
-      ]);
+    while(hasMore && syncState.isSyncing) {
+      try {
+        const response = await axios.get(`${cat.url}${page}`);
+        if (response.data.results.length === 0) { hasMore = false; break; }
 
-      const insertBatch = async (items, type) => {
-        for (const m of items) {
+        for (const m of response.data.results) {
           const genreId = m.genre_ids && m.genre_ids.length > 0 ? m.genre_ids[0] : null;
           const genreName = genreId ? (genreMap[genreId] || 'Unknown') : 'Unknown';
           const title = (m.title || m.name || '').replace(/'/g, "''");
           const overview = (m.overview || '').replace(/'/g, "''");
           const year = new Date(m.release_date || m.first_air_date || '2000').getFullYear();
+          const type = cat.name === 'movies' ? 'films' : cat.name;
           
           await pool.query(
             `INSERT INTO movies_cache (id, type, title, year, rating, genre, poster, backdrop, overview) 
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) 
              ON DUPLICATE KEY UPDATE id=id`,
-            [
-              m.id, type, title, year, m.vote_average || 0, genreName,
-              m.poster_path ? `${TMDB_IMG}${m.poster_path}` : '',
-              m.backdrop_path ? `${TMDB_BACKDROP}${m.backdrop_path}` : '',
-              overview
-            ]
+            [m.id, type, title, year, m.vote_average || 0, genreName, m.poster_path ? `${TMDB_IMG}${m.poster_path}` : '', m.backdrop_path ? `${TMDB_BACKDROP}${m.backdrop_path}` : '', overview]
           );
+          syncState.totalItems++;
         }
-      };
-
-      await insertBatch(mRes.data.results, 'films');
-      await insertBatch(tRes.data.results, 'series');
-      await insertBatch(aRes.data.results, 'anime');
-      
-      page++;
+        
+        syncState.currentPage = page;
+        page++;
+        
+        // TMDB Limit Handler: 30 pages per 20 seconds
+        if (page % 30 === 0) {
+          await new Promise(resolve => setTimeout(resolve, 20000)); // Wait 20 sec
+        } else {
+          await new Promise(resolve => setTimeout(resolve, 250)); // Small delay
+        }
+      } catch (err) {
+        console.error(`Error on ${cat.name} page ${page}:`, err.message);
+        hasMore = false; // Stop if error
+      }
     }
-    console.log('TMDB Sync Complete!');
-  } catch (err) {
-    console.error('Sync Error:', err.message);
   }
-});
+  syncState.isSyncing = false;
+}
 
 // --- Get Movies from TiDB ---
 app.get('/api/movies', async (req, res) => {
   try {
-    // Return a large chunk of cached movies ordered by rating
     const [rows] = await pool.query('SELECT * FROM movies_cache ORDER BY rating DESC LIMIT 500');
     res.json(rows);
-  } catch (err) {
-    res.status(500).json({ error: 'Database error' });
-  }
+  } catch (err) { res.status(500).json({ error: 'Database error' }); }
 });
 
-// --- Search Route (For Live Dropdown) ---
+// --- Get Single Movie Details by ID from TiDB ---
+app.get('/api/movie/:id', async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM movies_cache WHERE id = ?', [req.params.id]);
+    if (rows.length > 0) res.json(rows[0]);
+    else res.status(404).json({ error: 'Not cached yet' });
+  } catch (err) { res.status(500).json({ error: 'Database error' }); }
+});
+
+// --- Search Route ---
 app.get('/api/search', async (req, res) => {
   const q = req.query.q;
   if (!q) return res.json([]);
-  
   try {
-    // Search TiDB for titles matching the query
-    const [rows] = await pool.query(
-      'SELECT * FROM movies_cache WHERE title LIKE ? LIMIT 10', 
-      [`%${q}%`]
-    );
+    const [rows] = await pool.query('SELECT * FROM movies_cache WHERE title LIKE ? LIMIT 10', [`%${q}%`]);
     res.json(rows);
-  } catch (err) {
-    res.status(500).json([]);
-  }
+  } catch (err) { res.status(500).json([]); }
 });
 
 // --- Categories ---
@@ -136,17 +151,12 @@ app.get('/api/categories', async (req, res) => {
 app.get('/api/sources', async (req, res) => {
   const movieId = req.query.id;
   const dynamicSources = sourcesConfig.map(src => ({
-    name: src.name,
-    url: `${src.base_url}${movieId}`,
-    status: "online", 
-    ping: Math.floor(Math.random() * 100) + 20
+    name: src.name, url: `${src.base_url}${movieId}`, status: "online", ping: Math.floor(Math.random() * 100) + 20
   }));
   res.json(dynamicSources);
 });
 
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html'));
-});
+app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Z-Stream server running on port ${PORT}`));
