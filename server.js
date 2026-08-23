@@ -43,26 +43,36 @@ const TMDB_BASE = 'https://api.themoviedb.org/3';
 const TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
 const TMDB_BACKDROP = 'https://image.tmdb.org/t/p/original';
 
-// Map TMDB Genre IDs to Readable Names
+// Map TMDB Genre IDs to Readable Names (Movies & TV combined)
 const genreMap = {
   28: 'Action', 12: 'Adventure', 16: 'Animation', 35: 'Comedy', 80: 'Crime',
   18: 'Drama', 14: 'Fantasy', 27: 'Horror', 9648: 'Mystery', 878: 'Sci-Fi', 
-  53: 'Thriller', 10752: 'War', 37: 'Western', 10749: 'Romance', 10402: 'Music', 99: 'Documentary'
+  53: 'Thriller', 10752: 'War', 37: 'Western', 10749: 'Romance', 10402: 'Music', 
+  99: 'Documentary', 10751: 'Family', 10759: 'Action & Adventure', 10765: 'Sci-Fi & Fantasy'
 };
 
 function formatMovie(m, type) {
-  // Get the first genre ID from the array, default to null if empty
   const genreId = m.genre_ids && m.genre_ids.length > 0 ? m.genre_ids[0] : null;
-  // Translate the ID to a readable name using our map
   const genreName = genreId ? (genreMap[genreId] || 'Unknown') : 'Unknown';
+  
+  // Translate TMDB types to our Frontend tabs
+  // TMDB 'tv' with genre 16 (Animation) is usually Anime
+  let finalType = type;
+  if (genreId === 16 && type === 'tv') {
+    finalType = 'anime';
+  } else if (type === 'movie') {
+    finalType = 'films';
+  } else if (type === 'tv') {
+    finalType = 'series';
+  }
   
   return {
     id: m.id,
-    type: type,
+    type: finalType, // Now properly outputs 'films', 'series', or 'anime'
     title: m.title || m.name,
     year: new Date(m.release_date || m.first_air_date).getFullYear() || 'N/A',
     rating: m.vote_average ? m.vote_average.toFixed(1) : 'N/A',
-    genre: genreName, // Send the readable name to the frontend
+    genre: genreName,
     poster: m.poster_path ? `${TMDB_IMG}${m.poster_path}` : '',
     backdrop: m.backdrop_path ? `${TMDB_BACKDROP}${m.backdrop_path}` : '',
     overview: m.overview || 'No overview available.'
@@ -71,8 +81,22 @@ function formatMovie(m, type) {
 
 app.get('/api/movies', async (req, res) => {
   try {
-    const response = await axios.get(`${TMDB_BASE}/trending/all/week?api_key=${process.env.TMDB_API_KEY}`);
-    const movies = response.data.results.map(m => formatMovie(m, m.media_type));
+    // Fetch 2 pages of Movies and 2 pages of TV Shows (80 total items)
+    const [m1, m2, t1, t2] = await Promise.all([
+      axios.get(`${TMDB_BASE}/trending/movie/week?api_key=${process.env.TMDB_API_KEY}&page=1`),
+      axios.get(`${TMDB_BASE}/trending/movie/week?api_key=${process.env.TMDB_API_KEY}&page=2`),
+      axios.get(`${TMDB_BASE}/trending/tv/week?api_key=${process.env.TMDB_API_KEY}&page=1`),
+      axios.get(`${TMDB_BASE}/trending/tv/week?api_key=${process.env.TMDB_API_KEY}&page=2`)
+    ]);
+
+    // Combine and format them all
+    const movies = [
+      ...m1.data.results.map(m => formatMovie(m, 'movie')),
+      ...m2.data.results.map(m => formatMovie(m, 'movie')),
+      ...t1.data.results.map(m => formatMovie(m, 'tv')),
+      ...t2.data.results.map(m => formatMovie(m, 'tv'))
+    ];
+
     res.json(movies);
   } catch (err) {
     console.error('TMDB Error:', err.message);
