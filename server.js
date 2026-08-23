@@ -33,7 +33,6 @@ const genreMap = {
   99: 'Documentary', 10751: 'Family'
 };
 
-// Map categories to table names
 const tableMap = {
   'movies': 'movies_cache',
   'series': 'series_cache',
@@ -95,13 +94,14 @@ async function runSync() {
           const genreName = genreId ? (genreMap[genreId] || 'Unknown') : 'Unknown';
           const title = (m.title || m.name || '').replace(/'/g, "''");
           const overview = (m.overview || '').replace(/'/g, "''");
-          const year = new Date(m.release_date || m.first_air_date || '2000').getFullYear();
+          // Fetch full release date (e.g., 2024-05-15)
+          const release_date = m.release_date || m.first_air_date || 'Unknown';
           
           await pool.query(
-            `INSERT INTO ${tableName} (tmdb_id, title, year, rating, genre, poster, backdrop, overview) 
+            `INSERT INTO ${tableName} (tmdb_id, title, release_date, rating, genre, poster, backdrop, overview) 
              VALUES (?, ?, ?, ?, ?, ?, ?, ?) 
              ON DUPLICATE KEY UPDATE tmdb_id=tmdb_id`,
-            [m.id, title, year, m.vote_average || 0, genreName, m.poster_path ? `${TMDB_IMG}${m.poster_path}` : '', m.backdrop_path ? `${TMDB_BACKDROP}${m.backdrop_path}` : '', overview]
+            [m.id, title, release_date, m.vote_average || 0, genreName, m.poster_path ? `${TMDB_IMG}${m.poster_path}` : '', m.backdrop_path ? `${TMDB_BACKDROP}${m.backdrop_path}` : '', overview]
           );
           syncState.totalItems++;
         }
@@ -124,18 +124,17 @@ async function runSync() {
 app.get('/api/movies', async (req, res) => {
   try {
     const currentYear = new Date().getFullYear();
-    const minYear = currentYear - 2;
+    const minDate = `${currentYear - 2}-01-01`; // e.g., '2022-01-01'
     
-    // Fetch across all 3 tables, aliasing tmdb_id as id for frontend compatibility
     const query = `
-      SELECT 'films' as type, tmdb_id AS id, title, year, rating, genre, poster, backdrop, overview FROM movies_cache WHERE year >= ?
+      SELECT 'films' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM movies_cache WHERE release_date >= ?
       UNION ALL
-      SELECT 'series' as type, tmdb_id AS id, title, year, rating, genre, poster, backdrop, overview FROM series_cache WHERE year >= ?
+      SELECT 'series' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM series_cache WHERE release_date >= ?
       UNION ALL
-      SELECT 'anime' as type, tmdb_id AS id, title, year, rating, genre, poster, backdrop, overview FROM anime_cache WHERE year >= ?
+      SELECT 'anime' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM anime_cache WHERE release_date >= ?
       ORDER BY rating DESC LIMIT 500
     `;
-    const [rows] = await pool.query(query, [minYear, minYear, minYear]);
+    const [rows] = await pool.query(query, [minDate, minDate, minDate]);
     res.json(rows);
   } catch (err) { 
     console.error(err);
@@ -148,11 +147,11 @@ app.get('/api/movie/:id', async (req, res) => {
   try {
     const id = req.params.id;
     const query = `
-      SELECT 'films' as type, tmdb_id AS id, title, year, rating, genre, poster, backdrop, overview FROM movies_cache WHERE tmdb_id = ?
+      SELECT 'films' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM movies_cache WHERE tmdb_id = ?
       UNION ALL
-      SELECT 'series' as type, tmdb_id AS id, title, year, rating, genre, poster, backdrop, overview FROM series_cache WHERE tmdb_id = ?
+      SELECT 'series' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM series_cache WHERE tmdb_id = ?
       UNION ALL
-      SELECT 'anime' as type, tmdb_id AS id, title, year, rating, genre, poster, backdrop, overview FROM anime_cache WHERE tmdb_id = ?
+      SELECT 'anime' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM anime_cache WHERE tmdb_id = ?
     `;
     const [rows] = await pool.query(query, [id, id, id]);
     if (rows.length > 0) res.json(rows[0]);
@@ -166,11 +165,11 @@ app.get('/api/search', async (req, res) => {
   if (!q) return res.json([]);
   try {
     const query = `
-      SELECT 'films' as type, tmdb_id AS id, title, year, rating, genre, poster, backdrop, overview FROM movies_cache WHERE title LIKE ?
+      SELECT 'films' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM movies_cache WHERE title LIKE ?
       UNION ALL
-      SELECT 'series' as type, tmdb_id AS id, title, year, rating, genre, poster, backdrop, overview FROM series_cache WHERE title LIKE ?
+      SELECT 'series' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM series_cache WHERE title LIKE ?
       UNION ALL
-      SELECT 'anime' as type, tmdb_id AS id, title, year, rating, genre, poster, backdrop, overview FROM anime_cache WHERE title LIKE ?
+      SELECT 'anime' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM anime_cache WHERE title LIKE ?
       LIMIT 20
     `;
     const [rows] = await pool.query(query, [`%${q}%`, `%${q}%`, `%${q}%`]);
@@ -192,7 +191,6 @@ app.get('/api/sources', async (req, res) => {
   const movieId = req.query.id;
   let mediaType = 'movie';
 
-  // Determine if it's a TV show or Anime to hit the correct TMDB endpoint
   try {
     const [rows] = await pool.query(`
       SELECT 'movie' as type FROM movies_cache WHERE tmdb_id = ?
