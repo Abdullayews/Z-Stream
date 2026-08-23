@@ -7,7 +7,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
-<!-- Removed hls.js as we are using iframes now -->
 <style>
 :root {
   --void: #000000; --abyss: #050000; --crust: #0A0000; --regolith: #100000;
@@ -78,7 +77,7 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
 .hero::before { content: ''; position: absolute; inset: 0; background: radial-gradient(ellipse 70% 60% at 25% 70%, rgba(229,9,20,0.2) 0%, transparent 55%); z-index: 1; }
 .hero::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 60%; background: linear-gradient(0deg, #000000 0%, rgba(0,0,0,0.6) 40%, transparent 100%); z-index: 2; }
 .hero-backdrop { position: absolute; inset: 0; z-index: 0; opacity: 0.6; background-size: cover; background-position: center 20%; filter: saturate(0.8) contrast(1.15) brightness(0.8); mask-image: linear-gradient(0deg, black 20%, transparent 100%); -webkit-mask-image: linear-gradient(0deg, black 20%, transparent 100%); }
-.hero-body { position: relative; z-index: 3; max-width: 680px; padding-bottom: 40px; }
+.hero-body { position: relative; z-index: 3; max-width: 680px; padding-bottom: 60px; }
 .hero-chip { display: inline-flex; align-items: center; gap: 8px; padding: 7px 16px; background: rgba(229,9,20,0.15); border: 1px solid var(--border); border-radius: 24px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 3px; color: var(--flame); margin-bottom: 24px; backdrop-filter: blur(10px); }
 .hero-chip::before { content: ''; width: 6px; height: 6px; background: var(--lava); border-radius: 50%; box-shadow: 0 0 10px var(--lava); animation: pulseGlow 2s infinite; }
 @keyframes pulseGlow { 0%, 100% { box-shadow: 0 0 10px var(--lava); } 50% { box-shadow: 0 0 20px var(--lava), 0 0 30px rgba(229,9,20,0.5); } }
@@ -88,6 +87,15 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
 .hero-meta .dot { width: 4px; height: 4px; background: var(--lava); border-radius: 50%; }
 .hero-desc { font-size: 15.5px; line-height: 1.8; color: var(--text-dim); margin-bottom: 36px; max-width: 540px; font-weight: 300; }
 .hero-acts { display: flex; gap: 16px; flex-wrap: wrap; }
+
+.hero-arrow { position: absolute; top: 50%; transform: translateY(-50%); font-size: 48px; color: rgba(255,255,255,0.4); cursor: pointer; z-index: 4; user-select: none; transition: color 0.2s; padding: 0 20px; font-weight: 300; }
+.hero-arrow:hover { color: var(--lava); }
+.hero-arrow.left { left: 0; }
+.hero-arrow.right { right: 0; }
+.hero-dots { position: absolute; bottom: 40px; left: 80px; display: flex; gap: 8px; z-index: 4; }
+.hero-dot { width: 32px; height: 4px; background: rgba(255,255,255,0.2); border-radius: 2px; cursor: pointer; transition: all 0.3s; }
+.hero-dot:hover { background: rgba(255,255,255,0.4); }
+.hero-dot.active { background: var(--lava); box-shadow: 0 0 12px var(--lava); width: 48px; }
 
 .btn { display: inline-flex; align-items: center; gap: 10px; padding: 14px 28px; border-radius: 14px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1); border: none; outline: none; position: relative; overflow: hidden; }
 .btn-lava { background: linear-gradient(135deg, var(--magma), var(--lava), var(--flame)); color: #fff; box-shadow: 0 4px 24px rgba(229,9,20,0.5); }
@@ -169,7 +177,7 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
 ::-webkit-scrollbar-thumb { background: var(--rust); }
 ::-webkit-scrollbar-thumb:hover { background: var(--lava); }
 
-@media (max-width: 768px) { .topbar-inner { padding: 0 20px; } .navlinks { display: none; } .hero { padding: 32px; } .grid { padding: 0 20px; } }
+@media (max-width: 768px) { .topbar-inner { padding: 0 20px; } .navlinks { display: none; } .hero { padding: 32px; } .grid { padding: 0 20px; } .hero-dots { left: 32px; bottom: 20px; } .hero-arrow { display: none; } }
 </style>
 </head>
 <body>
@@ -215,6 +223,8 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
 <main class="stage" id="stage">
   <div class="hero" id="hero">
     <div class="hero-backdrop" id="heroBackdrop"></div>
+    <div class="hero-arrow left" onclick="prevHero()">‹</div>
+    <div class="hero-arrow right" onclick="nextHero()">›</div>
     <div class="hero-body">
       <div class="hero-chip">Featured</div>
       <h1 class="hero-title" id="heroTitle"></h1>
@@ -222,6 +232,7 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
       <p class="hero-desc" id="heroDesc"></p>
       <div class="hero-acts" id="heroActs"></div>
     </div>
+    <div class="hero-dots" id="heroDots"></div>
   </div>
   <div class="catbar" id="catbar"><div class="catpill active" data-cat="all" onclick="filterCategory('all')">All</div></div>
   <div id="sections"></div>
@@ -237,11 +248,13 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
   <div class="portal-body">
     <div class="vframe">
       <div class="vplaceholder" id="vplaceholder"><h3>Select a server below to start watching.</h3></div>
-      <!-- Replaced video tag with a sandboxed iframe to block popups/telemetry -->
       <iframe id="uvideo" sandbox="allow-scripts allow-same-origin allow-forms allow-presentation" referrerpolicy="no-referrer" allowfullscreen frameborder="0" style="display:none; width:100%; height:100%; border:none;"></iframe>
     </div>
     <div class="player-info">
-      <h2>Now Playing <span id="nowPlayingTitle">Loading...</span></h2>
+      <div>
+        <h2>Now Playing <span id="nowPlayingTitle">Loading...</span></h2>
+        <div style="font-size: 12px; color: var(--ash); margin-top: 5px;">TMDB ID: <span id="tmdbIdDisplay" style="color: var(--lava); font-family: 'Space Grotesk', monospace;">N/A</span></div>
+      </div>
       <button class="btn btn-ghost" id="playerFavBtn" onclick="togglePlayerFav()">Favorite</button>
     </div>
     <div class="server-grid" id="nodelist"></div>
@@ -283,7 +296,7 @@ const Cache = {
 };
 Cache.updateCounts();
 
-let view = 'main', cat = 'all', allMovies = [], allCats = [], featured = null, currentMovie = null, dynamicSources = [];
+let view = 'main', cat = 'all', allMovies = [], allCats = [], currentMovie = null, dynamicSources = [];
 const stage = document.getElementById('stage');
 
 function switchView(v) {
@@ -296,7 +309,7 @@ function switchView(v) {
   document.getElementById('empty').style.display = 'none';
   if (v === 'main') stage.classList.remove('pad-top'); else stage.classList.add('pad-top');
   
-  if (view === 'main') { document.getElementById('catbar').style.display = 'flex'; if (featured) renderHero(featured); renderSections(allMovies, allCats); }
+  if (view === 'main') { document.getElementById('catbar').style.display = 'flex'; if (allMovies.length > 0) initHero(allMovies); renderSections(allMovies, allCats); }
   else if (view === 'favorites') { const f = Cache.get('fav'); if (f.length === 0) showEmpty('Favorites Empty', 'Click the heart icon...'); else renderSection('Favorites', f); }
   else if (view === 'history') { const h = Cache.get('hist'); if (h.length === 0) showEmpty('History Empty', 'You haven\'t watched...'); else renderSection('Recently Watched', h); }
   else { const f = allMovies.filter(m => m.type === v); if (f.length === 0) showEmpty('No Content', `No ${v} found.`); else renderSection(null, f); }
@@ -311,7 +324,12 @@ async function handleSearch() {
   st = setTimeout(async () => {
     try {
       const r = await fetch(`${API_BASE}/search?q=${encodeURIComponent(q)}`); const res = await r.json();
-      if (res.length > 0) { dd.innerHTML = res.map(m => `<div class="search-item" onclick="openPlayer(${m.id}); document.getElementById('searchInput').value=''; document.getElementById('searchDropdown').style.display='none';"><img src="${m.poster}" alt="${m.title}"><div class="search-item-info"><div class="search-item-title">${m.title}</div><div class="search-item-meta">${m.year} • ${m.genre} • ${m.rating}</div></div></div>`).join(''); dd.style.display = 'block'; }
+      if (res.length > 0) { 
+        dd.innerHTML = res.map(m => {
+          const rating = parseFloat(m.rating).toFixed(1);
+          return `<div class="search-item" onclick="openPlayer(${m.id}); document.getElementById('searchInput').value=''; document.getElementById('searchDropdown').style.display='none';"><img src="${m.poster}" alt="${m.title}"><div class="search-item-info"><div class="search-item-title">${m.title}</div><div class="search-item-meta">${m.release_date} • ${m.genre} • ⭐ ${rating}</div></div></div>`;
+        }).join(''); dd.style.display = 'block'; 
+      }
       else { dd.innerHTML = '<div class="search-item"><div class="search-item-info"><div class="search-item-title">No results found</div></div></div>'; dd.style.display = 'block'; }
     } catch (e) {}
   }, 300);
@@ -323,41 +341,77 @@ async function fetchMovies() { try { const r = await fetch(`${API_BASE}/movies`)
 async function fetchCats() { try { const r = await fetch(`${API_BASE}/categories`); return r.ok ? r.json() : [{id:'all', name:'All'}]; } catch (e) { return [{id:'all', name:'All'}]; } }
 async function fetchSources(id) { try { const r = await fetch(`${API_BASE}/sources?id=${id}`); return r.ok ? r.json() : []; } catch (e) { return []; } }
 
+// --- HERO SLIDER LOGIC (Shows Top 10 Latest Items) ---
+let heroItems = [], heroIndex = 0, heroInterval;
+
+function initHero(items) {
+  // Sort by release_date descending and take the top 10
+  heroItems = [...items].sort((a, b) => new Date(b.release_date || '1970-01-01') - new Date(a.release_date || '1970-01-01')).slice(0, 10);
+  if (heroItems.length === 0) return;
+  
+  document.getElementById('heroDots').innerHTML = heroItems.map((_, i) => `<div class="hero-dot ${i===0?'active':''}" onclick="changeHero(${i})"></div>`).join('');
+  changeHero(0);
+  startHeroAuto();
+}
+
+function changeHero(index) {
+  heroIndex = index;
+  renderHero(heroItems[index]);
+  document.querySelectorAll('.hero-dot').forEach((d, i) => d.classList.toggle('active', i === index));
+}
+
+function nextHero() { let n = heroIndex + 1; if (n >= heroItems.length) n = 0; changeHero(n); }
+function prevHero() { let n = heroIndex - 1; if (n < 0) n = heroItems.length - 1; changeHero(n); }
+
+function startHeroAuto() {
+  clearInterval(heroInterval);
+  heroInterval = setInterval(nextHero, 8000);
+}
+
 function renderHero(m) {
+  if (!m) return;
+  const rating = parseFloat(m.rating).toFixed(1);
   document.getElementById('heroBackdrop').style.backgroundImage = `url('${m.backdrop}')`;
   document.getElementById('heroTitle').textContent = m.title.toUpperCase();
-  document.getElementById('heroMeta').innerHTML = `<span class="star">⭐ ${m.rating}</span><span class="dot"></span><span>${m.year}</span><span class="dot"></span><span>${m.genre}</span>`;
+  document.getElementById('heroMeta').innerHTML = `<span class="star">⭐ ${rating}</span><span class="dot"></span><span>${m.release_date}</span><span class="dot"></span><span>${m.genre}</span>`;
   document.getElementById('heroDesc').textContent = m.overview;
   document.getElementById('heroActs').innerHTML = `<button class="btn btn-lava" onclick="openPlayer(${m.id})">Watch Now</button><button class="btn btn-ghost" onclick="toggleFav(${m.id})">${Cache.has('fav',m.id)?'In Favorites':'Add to Favorites'}</button>`;
   document.getElementById('hero').classList.add('visible');
 }
+
 function renderCats(cats) { document.getElementById('catbar').innerHTML = cats.map(c => `<div class="catpill ${c.id==='all'?'active':''}" data-cat="${c.id}" onclick="filterCategory('${c.id}')">${c.name}</div>`).join(''); }
 function skel(c=6) { return Array(c).fill(0).map(()=>`<div class="skel-card"><div class="skel-img"></div><div class="skel-line"></div><div class="skel-line s"></div></div>`).join(''); }
+
 function card(m) {
   const fav = Cache.has('fav', m.id);
-  return `<div class="card"><div style="position:relative;overflow:hidden;" onclick="openPlayer(${m.id})"><img src="${m.poster}" class="card-img" alt="${m.title}" loading="lazy"><div class="card-badges"><div class="badge-rate">${m.rating}</div></div><div class="card-overlay"><div class="playbtn"><svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg></div></div></div><button class="card-fav" onclick="event.stopPropagation();toggleFav(${m.id})"><svg width="14" height="14" viewBox="0 0 24 24" fill="${fav?'currentColor':'none'}" stroke="currentColor" stroke-width="2.2"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg></button><div class="card-info"><div class="card-title">${m.title}</div><div class="card-meta"><span>${m.year}</span><span class="sep"></span><span>${m.genre}</span></div></div></div>`;
+  const rating = parseFloat(m.rating).toFixed(1);
+  return `<div class="card"><div style="position:relative;overflow:hidden;" onclick="openPlayer(${m.id})"><img src="${m.poster}" class="card-img" alt="${m.title}" loading="lazy"><div class="card-badges"><div class="badge-rate">${rating}</div></div><div class="card-overlay"><div class="playbtn"><svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg></div></div></div><button class="card-fav" onclick="event.stopPropagation();toggleFav(${m.id})"><svg width="14" height="14" viewBox="0 0 24 24" fill="${fav?'currentColor':'none'}" stroke="currentColor" stroke-width="2.2"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg></button><div class="card-info"><div class="card-title">${m.title}</div><div class="card-meta"><span>${m.release_date}</span><span class="sep"></span><span>${m.genre}</span></div></div></div>`;
 }
+
 function renderSection(title, movies, sid='') {
   const id = sid || 's_' + Math.random().toString(36).substr(2, 9);
   const hh = title ? `<div class="sec-head"><h2 class="sec-title">${title}</h2></div>` : '';
   document.getElementById('sections').insertAdjacentHTML('beforeend', `${hh}<div class="grid" id="${id}">${movies.length>0?movies.map(card).join(''):skel()}</div>`);
 }
+
 function renderSections(movies, cats) {
   document.getElementById('sections').innerHTML = '';
   if (cat !== 'all') { const f = movies.filter(m => m.genre === cat); renderSection(cat, f); return; }
   const gmap = {}; movies.forEach(m => { if(!gmap[m.genre]) gmap[m.genre]=[]; gmap[m.genre].push(m); });
   Object.entries(gmap).forEach(([g,items]) => renderSection(g, items));
 }
+
 function filterCategory(cid) { cat = cid; document.querySelectorAll('.catpill').forEach(t => t.classList.remove('active')); document.querySelector(`.catpill[data-cat="${cid}"]`)?.classList.add('active'); if (view === 'main') renderSections(allMovies, allCats); }
+
 function toggleFav(id) {
-  const m = allMovies.find(x => x.id === id); if (!m) return;
+  const m = allMovies.find(x => x.id === id) || currentMovie; if (!m) return;
   if (Cache.has('fav', id)) Cache.remove('fav', id); else Cache.add('fav', m);
   if (view === 'favorites') switchView('favorites');
-  else if (view === 'main') { if (featured && featured.id === id) renderHero(featured); renderSections(allMovies, allCats); }
+  else if (view === 'main') { if (heroItems[heroIndex] && heroItems[heroIndex].id === id) renderHero(heroItems[heroIndex]); renderSections(allMovies, allCats); }
   if (currentMovie && currentMovie.id === id) updatePlayerFavBtn();
 }
 
-// --- PLAYER LOGIC (UPDATED FOR IFRAME) ---
+// --- PLAYER LOGIC ---
 async function openPlayer(id) {
   try {
     const r = await fetch(`${API_BASE}/movie/${id}`);
@@ -367,12 +421,13 @@ async function openPlayer(id) {
   if (currentMovie) Cache.add('hist', currentMovie);
   
   document.getElementById('nowPlayingTitle').textContent = currentMovie?.title || 'Unknown';
+  document.getElementById('tmdbIdDisplay').textContent = currentMovie?.id || 'N/A';
   document.getElementById('portalTitle').textContent = (currentMovie?.title || 'Unknown').toUpperCase();
   document.getElementById('portal').classList.add('on');
   document.body.style.overflow = 'hidden';
   
   const iframe = document.getElementById('uvideo');
-  iframe.src = 'about:blank'; // Clear previous video
+  iframe.src = 'about:blank';
   iframe.style.display = 'none';
   document.getElementById('vplaceholder').style.display = 'block';
   
@@ -392,15 +447,10 @@ function selSrc(btn, name) {
   if (!btn) return;
   document.querySelectorAll('.server-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
-  
-  const source = dynamicSources.find(s => s.name === name); 
-  if (!source) return;
-  
+  const source = dynamicSources.find(s => s.name === name); if (!source) return;
   const iframe = document.getElementById('uvideo');
   document.getElementById('vplaceholder').style.display = 'none'; 
   iframe.style.display = 'block';
-  
-  // Simply set the iframe source. The sandbox attribute in the HTML handles blocking ads/popups.
   iframe.src = source.url;
 }
 
@@ -408,7 +458,7 @@ function closePlayer() {
   document.getElementById('portal').classList.remove('on'); 
   document.body.style.overflow = ''; 
   const iframe = document.getElementById('uvideo'); 
-  iframe.src = 'about:blank'; // Stop video playback
+  iframe.src = 'about:blank'; 
   currentMovie = null; 
 }
 document.addEventListener('keydown', e => { if (e.key==='Escape') closePlayer(); });
@@ -429,15 +479,12 @@ async function checkSyncStatus() {
       const data = await r.json();
       const btn = document.getElementById('syncBtn');
       const txt = document.getElementById('syncStatusText');
-      
       if (data.isSyncing) {
         txt.innerHTML = `Status: Syncing <b>${data.category}</b><br>Page: ${data.currentPage}<br>Cached Items: ${data.totalItems}`;
-        btn.disabled = true;
-        btn.innerText = 'Syncing...';
+        btn.disabled = true; btn.innerText = 'Syncing...';
       } else {
         txt.innerHTML = `Status: Idle / Complete<br>Cached Items: ${data.totalItems}`;
-        btn.disabled = false;
-        btn.innerText = 'Start Caching TMDB';
+        btn.disabled = false; btn.innerText = 'Start Caching TMDB';
       }
     } catch (e) {}
   }, 2000);
@@ -447,9 +494,8 @@ async function init() {
   document.getElementById('sections').innerHTML = `<div class="sec-head"><h2 class="sec-title">Loading Database...</h2></div><div class="grid">${skel(6)}</div>`;
   const [movies, cats] = await Promise.all([fetchMovies(), fetchCats()]);
   allMovies = movies; allCats = cats;
-  featured = movies.length > 0 ? movies[Math.floor(Math.random()*movies.length)] : null;
   renderCats(cats);
-  if (featured) renderHero(featured);
+  if (allMovies.length > 0) initHero(allMovies);
   renderSections(allMovies, cats);
 }
 
