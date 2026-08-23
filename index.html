@@ -491,9 +491,8 @@ for (let i = 0; i < 80; i++) {
   atm.appendChild(d);
 }
 
-// --- AUTH SYSTEM (Empty for now) ---
+// --- AUTH SYSTEM (Connected to TiDB via Backend) ---
 function checkAuth() {
-  // TODO: Replace with real TiDB auth check
   if (localStorage.getItem('zs_auth') !== 'true') {
     document.getElementById('loginPortal').style.display = 'flex';
   } else {
@@ -501,16 +500,28 @@ function checkAuth() {
   }
 }
 
-function doLogin() {
-  // TODO: Replace with real fetch to /api/login
+async function doLogin() {
   const u = document.getElementById('loginUser').value;
   const p = document.getElementById('loginPass').value;
   
-  // Temporary local bypass for UI testing
-  if (u && p) {
-    localStorage.setItem('zs_auth', 'true');
-    document.getElementById('loginPortal').style.display = 'none';
-  } else {
+  try {
+    // Send login request to Node.js backend
+    const response = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: u, password: p })
+    });
+    const data = await response.json();
+    
+    if (data.success) {
+      localStorage.setItem('zs_auth', 'true');
+      document.getElementById('loginPortal').style.display = 'none';
+      init(); // Load movies after login
+    } else {
+      document.getElementById('loginError').style.display = 'block';
+    }
+  } catch (err) {
+    console.error('Login error:', err);
     document.getElementById('loginError').style.display = 'block';
   }
 }
@@ -584,25 +595,29 @@ function showEmpty(t, d) {
   document.getElementById('empty').style.display = 'flex';
 }
 
-// --- EMPTY API FUNCTIONS ---
-// TODO: Replace these with real fetch calls to your Node.js backend (TMDB/TiDB)
-
+// --- REAL API FUNCTIONS (Connected to Node.js Backend) ---
 async function fetchMovies() {
-  // const r = await fetch(`${API_BASE}/movies`);
-  // return r.json();
-  return []; // Empty for now
+  try {
+    const r = await fetch(`${API_BASE}/movies`);
+    if (!r.ok) return [];
+    return r.json();
+  } catch (e) { console.error('Failed to fetch movies:', e); return []; }
 }
 
 async function fetchCats() {
-  // const r = await fetch(`${API_BASE}/categories`);
-  // return r.json();
-  return [{id:'all', name:'All'}]; // Empty for now
+  try {
+    const r = await fetch(`${API_BASE}/categories`);
+    if (!r.ok) return [{id:'all', name:'All'}];
+    return r.json();
+  } catch (e) { return [{id:'all', name:'All'}]; }
 }
 
 async function fetchSources(id) {
-  // const r = await fetch(`${API_BASE}/sources?id=${id}`);
-  // return r.json();
-  return []; // Empty for now
+  try {
+    const r = await fetch(`${API_BASE}/sources?id=${id}`);
+    if (!r.ok) return [];
+    return r.json();
+  } catch (e) { return []; }
 }
 
 function renderHero(m) {
@@ -658,8 +673,7 @@ function toggleFav(id) {
 
 // --- PLAYER LOGIC ---
 
-// Empty array for now, will be populated dynamically by backend later
-let dummySources = [];
+let dynamicSources = [];
 
 async function openPlayer(title) {
   currentMovie = allMovies.find(x => x.title === title);
@@ -674,13 +688,18 @@ async function openPlayer(title) {
   v.pause(); v.src = ''; v.style.display = 'none';
   document.getElementById('vplaceholder').style.display = 'block';
   
-  // TODO: Fetch sources dynamically from backend
-  dummySources = await fetchSources(currentMovie?.id);
+  // Fetch sources dynamically from backend
+  dynamicSources = await fetchSources(currentMovie?.id);
 
   // Generate server buttons
-  document.getElementById('nodelist').innerHTML = dummySources.length > 0 
-    ? dummySources.map((s, i) => `<div class="server-btn ${i===0?'active':''}" onclick="selSrc(this, '${s.name}')">${s.name}</div>`).join('')
+  document.getElementById('nodelist').innerHTML = dynamicSources.length > 0 
+    ? dynamicSources.map((s, i) => `<div class="server-btn ${i===0?'active':''}" onclick="selSrc(this, '${s.name}')">${s.name}</div>`).join('')
     : '<p style="color: var(--ash); text-align: center; grid-column: 1/-1;">No sources found for this title.</p>';
+
+  // Auto-select the first source if it exists
+  if (dynamicSources.length > 0) {
+    selSrc(document.querySelector('.server-btn'), dynamicSources[0].name);
+  }
 
   updatePlayerFavBtn();
 }
@@ -702,10 +721,12 @@ function togglePlayerFav() {
 }
 
 function selSrc(btn, serverName) {
+  if (!btn) return;
+  
   document.querySelectorAll('.server-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   
-  const source = dummySources.find(s => s.name === serverName);
+  const source = dynamicSources.find(s => s.name === serverName);
   if (!source) return;
 
   const video = document.getElementById('uvideo');
@@ -718,7 +739,7 @@ function selSrc(btn, serverName) {
     hls = null;
   }
 
-  // Dynamically detect format (HLS vs MP4)
+  // Dynamically detect format (HLS vs MP4) just before playing
   if (source.url.includes('.m3u8')) {
     if (Hls.isSupported()) {
       hls = new Hls();
@@ -735,6 +756,10 @@ function selSrc(btn, serverName) {
     }
   } 
   else if (source.url.includes('.mp4')) {
+    video.src = source.url;
+    video.play();
+  } else {
+    // Fallback for direct embeds or unknown formats
     video.src = source.url;
     video.play();
   }
@@ -764,6 +789,7 @@ async function init() {
   renderSections(allMovies, cats);
 }
 
+// Initialize the app (fetch movies in background even if behind login portal)
 init();
 </script>
 </body>
