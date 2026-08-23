@@ -2,11 +2,15 @@ const express = require('express');
 const mysql = require('mysql2/promise');
 const axios = require('axios');
 const path = require('path');
+const fs = require('fs');
 require('dotenv').config();
 
 const app = express();
 app.use(express.json());
 app.use(express.static(__dirname));
+
+// Load sources from sources.json
+const sourcesConfig = JSON.parse(fs.readFileSync(path.join(__dirname, 'sources.json'), 'utf8'));
 
 // --- Database Connection ---
 const pool = mysql.createPool({
@@ -39,7 +43,6 @@ const TMDB_BASE = 'https://api.themoviedb.org/3';
 const TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
 const TMDB_BACKDROP = 'https://image.tmdb.org/t/p/original';
 
-// Helper function to format TMDB data for our frontend
 function formatMovie(m, type) {
   return {
     id: m.id,
@@ -47,14 +50,13 @@ function formatMovie(m, type) {
     title: m.title || m.name,
     year: new Date(m.release_date || m.first_air_date).getFullYear() || 'N/A',
     rating: m.vote_average ? m.vote_average.toFixed(1) : 'N/A',
-    genre: m.genre_ids && m.genre_ids.length > 0 ? m.genre_ids[0] : 'Unknown', // Note: TMDB returns IDs, we'll map these later if needed
+    genre: m.genre_ids && m.genre_ids.length > 0 ? m.genre_ids[0] : 'Unknown',
     poster: m.poster_path ? `${TMDB_IMG}${m.poster_path}` : '',
     backdrop: m.backdrop_path ? `${TMDB_BACKDROP}${m.backdrop_path}` : '',
     overview: m.overview || 'No overview available.'
   };
 }
 
-// Get Trending Movies
 app.get('/api/movies', async (req, res) => {
   try {
     const response = await axios.get(`${TMDB_BASE}/trending/all/week?api_key=${process.env.TMDB_API_KEY}`);
@@ -66,23 +68,28 @@ app.get('/api/movies', async (req, res) => {
   }
 });
 
-// Get Categories (Genres)
 app.get('/api/categories', async (req, res) => {
-  // For simplicity, we return standard categories. TMDB uses genre IDs.
   res.json([
-    {id: 'all', name: 'All'},
-    {id: '28', name: 'Action'},
-    {id: '12', name: 'Adventure'},
-    {id: '16', name: 'Animation'},
-    {id: '35', name: 'Comedy'},
-    {id: '80', name: 'Crime'},
-    {id: '18', name: 'Drama'},
-    {id: '14', name: 'Fantasy'},
-    {id: '27', name: 'Horror'},
-    {id: '9648', name: 'Mystery'},
-    {id: '878', name: 'Sci-Fi'},
-    {id: '53', name: 'Thriller'}
+    {id: 'all', name: 'All'}, {id: '28', name: 'Action'}, {id: '12', name: 'Adventure'},
+    {id: '16', name: 'Animation'}, {id: '35', name: 'Comedy'}, {id: '80', name: 'Crime'},
+    {id: '18', name: 'Drama'}, {id: '14', name: 'Fantasy'}, {id: '27', name: 'Horror'},
+    {id: '9648', name: 'Mystery'}, {id: '878', name: 'Sci-Fi'}, {id: '53', name: 'Thriller'}
   ]);
+});
+
+// --- Dynamic Source Search Route ---
+app.get('/api/sources', async (req, res) => {
+  const movieId = req.query.id;
+  // For now, we just return the base URLs with the movie ID attached.
+  // Later, we can add scraping logic here to check if they are online.
+  const dynamicSources = sourcesConfig.map(src => ({
+    name: src.name,
+    url: `${src.base_url}${movieId}`,
+    status: "online", // Default to online for now
+    ping: Math.floor(Math.random() * 100) + 20
+  }));
+  
+  res.json(dynamicSources);
 });
 
 // Fallback to index.html
