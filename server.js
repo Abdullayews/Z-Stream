@@ -41,18 +41,24 @@ app.post('/api/login', async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- Background Sync Engine ---
-let syncState = { isSyncing: false };
+// --- Sync Engine State ---
+let syncState = { isSyncing: false, currentPage: 0, totalItems: 0, category: 'movies' };
 
 app.get('/api/start-sync', async (req, res) => {
-  if (syncState.isSyncing) return res.json({ msg: 'Already syncing in background' });
+  if (syncState.isSyncing) return res.json({ msg: 'Already syncing', ...syncState });
   
   syncState.isSyncing = true;
-  runBackgroundSync(); // Run asynchronously without blocking the response
-  res.json({ msg: 'Background sync started' });
+  syncState.currentPage = 0;
+  syncState.totalItems = 0;
+  runSync();
+  res.json({ msg: 'Sync started', ...syncState });
 });
 
-async function runBackgroundSync() {
+app.get('/api/sync-status', (req, res) => {
+  res.json(syncState);
+});
+
+async function runSync() {
   const categories = [
     { name: 'movies', url: `${TMDB_BASE}/discover/movie?api_key=${TMDB_KEY}&sort_by=popularity.desc&page=` },
     { name: 'series', url: `${TMDB_BASE}/discover/tv?api_key=${TMDB_KEY}&sort_by=popularity.desc&page=` },
@@ -60,6 +66,9 @@ async function runBackgroundSync() {
   ];
 
   for (const cat of categories) {
+    if (!syncState.isSyncing) break; // Stop if user halted
+    
+    syncState.category = cat.name;
     let page = 1;
     let hasMore = true;
     
@@ -69,18 +78,21 @@ async function runBackgroundSync() {
         const items = response.data.results;
         if (items.length === 0) { hasMore = false; break; }
 
-        // Check if this page is already fully cached in TiDB
-        const ids = items.map(m => m.id);
-        const [existing] = await pool.query(`SELECT id FROM movies_cache WHERE id IN (?)`, [ids]);
+        // --- SMART STOP LOGIC ---
+        // Get all IDs from the fetched TMDB page
+        const pageIds = items.map(m => m.id);
         
-        // If all items on this page are already in the database, stop syncing this category
-        if (existing.length === items.length) {
-          console.log(`[${cat.name}] Page ${page} fully cached. Stopping sync for this category.`);
-          hasMore = false;
+        // Check TiDB to see how many of these IDs are already cached
+        const [existingRows] = await pool.query('SELECT id FROM movies_cache WHERE id IN (?)', [pageIds]);
+        
+        // If the number of cached items matches the page size, the page is fully cached
+        if (existingRows.length === items.length) {
+          console.log(`Page ${page} of ${cat.name} is fully cached. Stopping sync for this category.`);
+          hasMore = false; // Break the while loop, move to next category
           break;
         }
+        // ------------------------
 
-        // Otherwise, insert/update the items
         for (const m of items) {
           const genreId = m.genre_ids && m.genre_ids.length > 0 ? m.genre_ids[0] : null;
           const genreName = genreId ? (genreMap[genreId] || 'Unknown') : 'Unknown';
@@ -95,24 +107,28 @@ async function runBackgroundSync() {
              ON DUPLICATE KEY UPDATE id=id`,
             [m.id, type, title, year, m.vote_average || 0, genreName, m.poster_path ? `${TMDB_IMG}${m.poster_path}` : '', m.backdrop_path ? `${TMDB_BACKDROP}${m.backdrop_path}` : '', overview]
           );
+          syncState.totalItems++;
         }
         
+        syncState.currentPage = page;
         page++;
         
-        // TMDB Limit: 30 pages per 20 seconds
+        // TMDB Limit Handler: 30 pages per 20 seconds
         if (page % 30 === 0) {
           await new Promise(resolve => setTimeout(resolve, 20000)); // Wait 20 sec
         } else {
-          await new Promise(resolve => setTimeout(resolve, 250)); // Small delay to prevent spamming
+          await new Promise(resolve => setTimeout(resolve, 250)); // Small delay
         }
       } catch (err) {
         console.error(`Error on ${cat.name} page ${page}:`, err.message);
-        hasMore = false; 
+        hasMore = false; // Stop if error
       }
     }
   }
+  
+  // Mark sync as finished
   syncState.isSyncing = false;
-  console.log('Background sync complete or stopped.');
+  console.log('TMDB Sync Complete or Stopped early due to full cache!');
 }
 
 // --- Get Movies from TiDB ---
@@ -123,7 +139,7 @@ app.get('/api/movies', async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Database error' }); }
 });
 
-// --- Get Single Movie Details by ID ---
+// --- Get Single Movie Details by ID from TiDB ---
 app.get('/api/movie/:id', async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT * FROM movies_cache WHERE id = ?', [req.params.id]);
