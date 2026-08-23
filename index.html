@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+<!-- Removed hls.js as we are using iframes now -->
 <style>
 :root {
   --void: #000000; --abyss: #050000; --crust: #0A0000; --regolith: #100000;
@@ -144,7 +144,7 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
 
 .portal-body { padding: 40px; max-width: 1400px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 30px; }
 .vframe { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 16px; overflow: hidden; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; box-shadow: 0 20px 50px rgba(0,0,0,0.8); }
-.vframe video { width: 100%; height: 100%; }
+.vframe video, .vframe iframe { width: 100%; height: 100%; border: none; border-radius: 16px; }
 .vplaceholder { text-align: center; color: var(--ash); padding: 48px; }
 .vplaceholder h3 { font-family: 'Orbitron', sans-serif; font-size: 18px; color: var(--fog); margin-bottom: 10px; }
 
@@ -157,7 +157,6 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
 .server-btn:hover { background: rgba(229,9,20,0.15); color: var(--text); transform: translateY(-2px); }
 .server-btn.active { background: linear-gradient(135deg, var(--magma), var(--lava)); color: #fff; box-shadow: 0 4px 15px rgba(229,9,20,0.4); }
 
-/* Cache Sync Floating Panel */
 .sync-panel { position: fixed; bottom: 20px; right: 20px; background: rgba(10, 0, 0, 0.9); border: 1px solid var(--border); backdrop-filter: blur(20px); padding: 20px; border-radius: 16px; z-index: 500; box-shadow: 0 10px 30px rgba(0,0,0,0.5); display: none; min-width: 300px; }
 .sync-panel h4 { font-family: 'Orbitron', sans-serif; font-size: 14px; color: var(--lava); margin-bottom: 10px; text-transform: uppercase; }
 .sync-panel p { font-size: 12px; color: var(--fog); margin-bottom: 15px; }
@@ -175,7 +174,6 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
 </head>
 <body>
 
-<!-- Login Portal -->
 <div id="loginPortal" class="login-portal">
   <div class="login-box">
     <h1>Z-Stream Access</h1>
@@ -236,10 +234,12 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
     <div class="portal-title" id="portalTitle">Now Playing</div>
     <button class="portal-x" onclick="closePlayer()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
   </div>
-<div class="vframe">
-  <div class="vplaceholder" id="vplaceholder"><h3>Select a server below to start watching.</h3></div>
-  <iframe id="uvideo" frameborder="0" allowfullscreen style="display:none; width:100%; height:100%;"></iframe>
-</div>
+  <div class="portal-body">
+    <div class="vframe">
+      <div class="vplaceholder" id="vplaceholder"><h3>Select a server below to start watching.</h3></div>
+      <!-- Replaced video tag with a sandboxed iframe to block popups/telemetry -->
+      <iframe id="uvideo" sandbox="allow-scripts allow-same-origin allow-forms allow-presentation" referrerpolicy="no-referrer" allowfullscreen frameborder="0" style="display:none; width:100%; height:100%; border:none;"></iframe>
+    </div>
     <div class="player-info">
       <h2>Now Playing <span id="nowPlayingTitle">Loading...</span></h2>
       <button class="btn btn-ghost" id="playerFavBtn" onclick="togglePlayerFav()">Favorite</button>
@@ -248,7 +248,6 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
   </div>
 </div>
 
-<!-- Cache Sync Panel -->
 <div class="sync-panel" id="syncPanel">
   <h4>Database Sync</h4>
   <p id="syncStatusText">Status: Idle</p>
@@ -284,7 +283,7 @@ const Cache = {
 };
 Cache.updateCounts();
 
-let view = 'main', cat = 'all', allMovies = [], allCats = [], featured = null, currentMovie = null, hls = null;
+let view = 'main', cat = 'all', allMovies = [], allCats = [], featured = null, currentMovie = null, dynamicSources = [];
 const stage = document.getElementById('stage');
 
 function switchView(v) {
@@ -358,10 +357,8 @@ function toggleFav(id) {
   if (currentMovie && currentMovie.id === id) updatePlayerFavBtn();
 }
 
-// --- PLAYER LOGIC ---
-let dynamicSources = [];
+// --- PLAYER LOGIC (UPDATED FOR IFRAME) ---
 async function openPlayer(id) {
-  // Fetch detailed info from TiDB using the TMDB ID
   try {
     const r = await fetch(`${API_BASE}/movie/${id}`);
     if (r.ok) currentMovie = await r.json();
@@ -374,33 +371,46 @@ async function openPlayer(id) {
   document.getElementById('portal').classList.add('on');
   document.body.style.overflow = 'hidden';
   
-  const v = document.getElementById('uvideo');
-  v.pause(); v.src = ''; v.style.display = 'none';
+  const iframe = document.getElementById('uvideo');
+  iframe.src = 'about:blank'; // Clear previous video
+  iframe.style.display = 'none';
   document.getElementById('vplaceholder').style.display = 'block';
   
   dynamicSources = await fetchSources(id);
   document.getElementById('nodelist').innerHTML = dynamicSources.length > 0 
     ? dynamicSources.map((s, i) => `<div class="server-btn ${i===0?'active':''}" onclick="selSrc(this, '${s.name}')">${s.name}</div>`).join('')
     : '<p style="color: var(--ash); text-align: center; grid-column: 1/-1;">No sources found.</p>';
+    
   if (dynamicSources.length > 0) selSrc(document.querySelector('.server-btn'), dynamicSources[0].name);
   updatePlayerFavBtn();
 }
+
 function updatePlayerFavBtn() { document.getElementById('playerFavBtn').innerHTML = (currentMovie && Cache.has('fav', currentMovie.id)) ? 'Favorited' : 'Favorite'; }
 function togglePlayerFav() { if (currentMovie) toggleFav(currentMovie.id); }
+
 function selSrc(btn, name) {
   if (!btn) return;
   document.querySelectorAll('.server-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
-  const source = dynamicSources.find(s => s.name === name); if (!source) return;
-  const video = document.getElementById('uvideo');
-  document.getElementById('vplaceholder').style.display = 'none'; video.style.display = 'block';
-  if (hls) { hls.destroy(); hls = null; }
-  if (source.url.includes('.m3u8')) {
-    if (Hls.isSupported()) { hls = new Hls(); hls.loadSource(source.url); hls.attachMedia(video); hls.on(Hls.Events.MANIFEST_PARSED, () => video.play()); }
-    else if (video.canPlayType('application/vnd.apple.mpegurl')) { video.src = source.url; video.play(); }
-  } else { video.src = source.url; video.play(); }
+  
+  const source = dynamicSources.find(s => s.name === name); 
+  if (!source) return;
+  
+  const iframe = document.getElementById('uvideo');
+  document.getElementById('vplaceholder').style.display = 'none'; 
+  iframe.style.display = 'block';
+  
+  // Simply set the iframe source. The sandbox attribute in the HTML handles blocking ads/popups.
+  iframe.src = source.url;
 }
-function closePlayer() { document.getElementById('portal').classList.remove('on'); document.body.style.overflow = ''; const v = document.getElementById('uvideo'); v.pause(); v.src = ''; if (hls) { hls.destroy(); hls = null; } currentMovie = null; }
+
+function closePlayer() { 
+  document.getElementById('portal').classList.remove('on'); 
+  document.body.style.overflow = ''; 
+  const iframe = document.getElementById('uvideo'); 
+  iframe.src = 'about:blank'; // Stop video playback
+  currentMovie = null; 
+}
 document.addEventListener('keydown', e => { if (e.key==='Escape') closePlayer(); });
 
 // --- SYNC ENGINE UI ---
@@ -428,10 +438,9 @@ async function checkSyncStatus() {
         txt.innerHTML = `Status: Idle / Complete<br>Cached Items: ${data.totalItems}`;
         btn.disabled = false;
         btn.innerText = 'Start Caching TMDB';
-        // Optional: clearInterval(syncInterval); // stop polling when idle
       }
     } catch (e) {}
-  }, 2000); // Poll every 2 seconds
+  }, 2000);
 }
 
 async function init() {
