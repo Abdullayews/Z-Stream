@@ -236,11 +236,10 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
     <div class="portal-title" id="portalTitle">Now Playing</div>
     <button class="portal-x" onclick="closePlayer()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
   </div>
-  <div class="portal-body">
-    <div class="vframe">
-      <div class="vplaceholder" id="vplaceholder"><h3>Select a server below to start watching.</h3></div>
-      <video id="uvideo" controls style="display:none"></video>
-    </div>
+<div class="vframe">
+  <div class="vplaceholder" id="vplaceholder"><h3>Select a server below to start watching.</h3></div>
+  <iframe id="uvideo" frameborder="0" allowfullscreen style="display:none; width:100%; height:100%;"></iframe>
+</div>
     <div class="player-info">
       <h2>Now Playing <span id="nowPlayingTitle">Loading...</span></h2>
       <button class="btn btn-ghost" id="playerFavBtn" onclick="togglePlayerFav()">Favorite</button>
