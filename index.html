@@ -157,6 +157,14 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
 .server-btn:hover { background: rgba(229,9,20,0.15); color: var(--text); transform: translateY(-2px); }
 .server-btn.active { background: linear-gradient(135deg, var(--magma), var(--lava)); color: #fff; box-shadow: 0 4px 15px rgba(229,9,20,0.4); }
 
+/* Cache Sync Floating Panel */
+.sync-panel { position: fixed; bottom: 20px; right: 20px; background: rgba(10, 0, 0, 0.9); border: 1px solid var(--border); backdrop-filter: blur(20px); padding: 20px; border-radius: 16px; z-index: 500; box-shadow: 0 10px 30px rgba(0,0,0,0.5); display: none; min-width: 300px; }
+.sync-panel h4 { font-family: 'Orbitron', sans-serif; font-size: 14px; color: var(--lava); margin-bottom: 10px; text-transform: uppercase; }
+.sync-panel p { font-size: 12px; color: var(--fog); margin-bottom: 15px; }
+.sync-btn { width: 100%; padding: 10px; background: var(--lava); border: none; border-radius: 8px; color: #fff; font-weight: 600; cursor: pointer; }
+.sync-btn:hover { background: var(--flame); }
+.sync-btn:disabled { background: var(--ash); cursor: not-allowed; }
+
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: #000; }
 ::-webkit-scrollbar-thumb { background: var(--rust); }
@@ -241,13 +249,20 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
   </div>
 </div>
 
+<!-- Cache Sync Panel -->
+<div class="sync-panel" id="syncPanel">
+  <h4>Database Sync</h4>
+  <p id="syncStatusText">Status: Idle</p>
+  <button class="sync-btn" id="syncBtn" onclick="startSync()">Start Caching TMDB</button>
+</div>
+
 <script>
 const API_BASE = '/api';
 
 // --- AUTH ---
 function checkAuth() {
   if (localStorage.getItem('zs_auth') !== 'true') document.getElementById('loginPortal').style.display = 'flex';
-  else { document.getElementById('loginPortal').style.display = 'none'; init(); startBackgroundSync(); }
+  else { document.getElementById('loginPortal').style.display = 'none'; init(); checkSyncStatus(); document.getElementById('syncPanel').style.display = 'block'; }
 }
 async function doLogin() {
   const u = document.getElementById('loginUser').value, p = document.getElementById('loginPass').value;
@@ -258,12 +273,6 @@ async function doLogin() {
   } catch (e) { document.getElementById('loginError').style.display = 'block'; }
 }
 function doLogout() { localStorage.removeItem('zs_auth'); location.reload(); }
-
-// --- SILENT BACKGROUND SYNC ---
-function startBackgroundSync() {
-  // Silently trigger the backend to cache TMDB without showing any UI
-  fetch(`${API_BASE}/start-sync`).catch(e => console.error('Sync trigger failed:', e));
-}
 
 // --- CACHE ---
 const Cache = {
@@ -353,6 +362,7 @@ function toggleFav(id) {
 // --- PLAYER LOGIC ---
 let dynamicSources = [];
 async function openPlayer(id) {
+  // Fetch detailed info from TiDB using the TMDB ID
   try {
     const r = await fetch(`${API_BASE}/movie/${id}`);
     if (r.ok) currentMovie = await r.json();
@@ -393,6 +403,37 @@ function selSrc(btn, name) {
 }
 function closePlayer() { document.getElementById('portal').classList.remove('on'); document.body.style.overflow = ''; const v = document.getElementById('uvideo'); v.pause(); v.src = ''; if (hls) { hls.destroy(); hls = null; } currentMovie = null; }
 document.addEventListener('keydown', e => { if (e.key==='Escape') closePlayer(); });
+
+// --- SYNC ENGINE UI ---
+async function startSync() {
+  document.getElementById('syncBtn').disabled = true;
+  document.getElementById('syncBtn').innerText = 'Syncing...';
+  await fetch(`${API_BASE}/start-sync`);
+  checkSyncStatus();
+}
+let syncInterval;
+async function checkSyncStatus() {
+  clearInterval(syncInterval);
+  syncInterval = setInterval(async () => {
+    try {
+      const r = await fetch(`${API_BASE}/sync-status`);
+      const data = await r.json();
+      const btn = document.getElementById('syncBtn');
+      const txt = document.getElementById('syncStatusText');
+      
+      if (data.isSyncing) {
+        txt.innerHTML = `Status: Syncing <b>${data.category}</b><br>Page: ${data.currentPage}<br>Cached Items: ${data.totalItems}`;
+        btn.disabled = true;
+        btn.innerText = 'Syncing...';
+      } else {
+        txt.innerHTML = `Status: Idle / Complete<br>Cached Items: ${data.totalItems}`;
+        btn.disabled = false;
+        btn.innerText = 'Start Caching TMDB';
+        // Optional: clearInterval(syncInterval); // stop polling when idle
+      }
+    } catch (e) {}
+  }, 2000); // Poll every 2 seconds
+}
 
 async function init() {
   document.getElementById('sections').innerHTML = `<div class="sec-head"><h2 class="sec-title">Loading Database...</h2></div><div class="grid">${skel(6)}</div>`;
