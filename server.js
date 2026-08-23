@@ -9,8 +9,10 @@ const app = express();
 app.use(express.json());
 app.use(express.static(__dirname));
 
+// Load Sources Config
 const sourcesConfig = JSON.parse(fs.readFileSync(path.join(__dirname, 'sources.json'), 'utf8'));
 
+// Database Pool
 const pool = mysql.createPool({
   host: process.env.TIDB_HOST,
   port: process.env.TIDB_PORT,
@@ -20,6 +22,7 @@ const pool = mysql.createPool({
   ssl: { rejectUnauthorized: true }
 });
 
+// TMDB Config
 const TMDB_BASE = 'https://api.themoviedb.org/3';
 const TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
 const TMDB_BACKDROP = 'https://image.tmdb.org/t/p/original';
@@ -38,7 +41,10 @@ app.post('/api/login', async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT * FROM users WHERE username = ? AND password = ?', [username, password]);
     res.json({ success: rows.length > 0 });
-  } catch (err) { res.status(500).json({ success: false }); }
+  } catch (err) { 
+    console.error('Login error:', err);
+    res.status(500).json({ success: false }); 
+  }
 });
 
 // --- Sync Engine State ---
@@ -66,7 +72,7 @@ async function runSync() {
   ];
 
   for (const cat of categories) {
-    if (!syncState.isSyncing) break; // Stop if user halted
+    if (!syncState.isSyncing) break;
     
     syncState.category = cat.name;
     let page = 1;
@@ -78,20 +84,15 @@ async function runSync() {
         const items = response.data.results;
         if (items.length === 0) { hasMore = false; break; }
 
-        // --- SMART STOP LOGIC ---
-        // Get all IDs from the fetched TMDB page
+        // Smart Stop Logic
         const pageIds = items.map(m => m.id);
-        
-        // Check TiDB to see how many of these IDs are already cached
         const [existingRows] = await pool.query('SELECT id FROM movies_cache WHERE id IN (?)', [pageIds]);
         
-        // If the number of cached items matches the page size, the page is fully cached
         if (existingRows.length === items.length) {
           console.log(`Page ${page} of ${cat.name} is fully cached. Stopping sync for this category.`);
-          hasMore = false; // Break the while loop, move to next category
+          hasMore = false;
           break;
         }
-        // ------------------------
 
         for (const m of items) {
           const genreId = m.genre_ids && m.genre_ids.length > 0 ? m.genre_ids[0] : null;
@@ -113,20 +114,19 @@ async function runSync() {
         syncState.currentPage = page;
         page++;
         
-        // TMDB Limit Handler: 30 pages per 20 seconds
+        // TMDB Rate Limit Handler
         if (page % 30 === 0) {
-          await new Promise(resolve => setTimeout(resolve, 20000)); // Wait 20 sec
+          await new Promise(resolve => setTimeout(resolve, 20000));
         } else {
-          await new Promise(resolve => setTimeout(resolve, 250)); // Small delay
+          await new Promise(resolve => setTimeout(resolve, 250));
         }
       } catch (err) {
         console.error(`Error on ${cat.name} page ${page}:`, err.message);
-        hasMore = false; // Stop if error
+        hasMore = false;
       }
     }
   }
   
-  // Mark sync as finished
   syncState.isSyncing = false;
   console.log('TMDB Sync Complete or Stopped early due to full cache!');
 }
@@ -139,7 +139,7 @@ app.get('/api/movies', async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Database error' }); }
 });
 
-// --- Get Single Movie Details by ID from TiDB ---
+// --- Get Single Movie Details by ID ---
 app.get('/api/movie/:id', async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT * FROM movies_cache WHERE id = ?', [req.params.id]);
@@ -148,18 +148,22 @@ app.get('/api/movie/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Database error' }); }
 });
 
-// --- Search Route ---
+// --- Perfected Search System ---
 app.get('/api/search', async (req, res) => {
   const q = req.query.q;
   if (!q) return res.json([]);
   try {
-    const [rows] = await pool.query('SELECT * FROM movies_cache WHERE title LIKE ? LIMIT 10', [`%${q}%`]);
+    // Search across title, genre, and year for perfect matching
+    const [rows] = await pool.query(
+      'SELECT * FROM movies_cache WHERE title LIKE ? OR genre LIKE ? OR year LIKE ? LIMIT 20', 
+      [`%${q}%`, `%${q}%`, `%${q}%`]
+    );
     res.json(rows);
   } catch (err) { res.status(500).json([]); }
 });
 
 // --- Categories ---
-app.get('/api/categories', async (req, res) => {
+app.get('/api/categories', (req, res) => {
   res.json([
     {id: 'all', name: 'All'}, {id: 'Action', name: 'Action'}, {id: 'Adventure', name: 'Adventure'},
     {id: 'Animation', name: 'Animation'}, {id: 'Comedy', name: 'Comedy'}, {id: 'Crime', name: 'Crime'},
@@ -168,12 +172,40 @@ app.get('/api/categories', async (req, res) => {
   ]);
 });
 
-// --- Sources ---
+// --- Perfected Sources System ---
 app.get('/api/sources', async (req, res) => {
   const movieId = req.query.id;
-  const dynamicSources = sourcesConfig.map(src => ({
-    name: src.name, url: `${src.base_url}${movieId}`, status: "online", ping: Math.floor(Math.random() * 100) + 20
-  }));
+  let mediaType = 'films'; // Default to films
+
+  // Check DB to see if it's a Series or Anime to format URL correctly
+  try {
+    const [rows] = await pool.query('SELECT type FROM movies_cache WHERE id = ?', [movieId]);
+    if (rows.length > 0) mediaType = rows[0].type;
+  } catch (e) {}
+
+  const isTV = mediaType === 'series' || mediaType === 'anime';
+
+  const dynamicSources = sourcesConfig.map(src => {
+    let url = `${src.base_url}${movieId}`;
+    
+    // If it's a TV show, construct URL for Season 1, Episode 1 to prevent player crashes
+    if (isTV) {
+      if (src.name === 'VidSrc') url = `https://vidsrc.to/embed/tv/${movieId}/1/1`;
+      else if (src.name === 'VidSrc.xyz') url = `https://vidsrc.xyz/embed/tv/${movieId}/1/1`;
+      else if (src.name === '2Embed') url = `https://www.2embed.cc/embedtv/${movieId}&s=1&e=1`;
+      else if (src.name === 'MultiEmbed') url = `https://multiembed.mov/?video_id=${movieId}&tmdb=1&s=1&e=1`;
+      else if (src.name === 'SuperEmbed') url = `https://se.bingetime.eu.org/embedtv/${movieId}/1/1`;
+      // Vidgod, Streamex, CinemaOS usually handle TV IDs natively, but fallback to standard URL
+    }
+
+    return {
+      name: src.name,
+      url: url,
+      status: "online",
+      ping: Math.floor(Math.random() * 100) + 20
+    };
+  });
+
   res.json(dynamicSources);
 });
 
