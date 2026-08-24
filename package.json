@@ -1,6 +1,6 @@
 {
   "name": "z-stream",
-  "version": "2.0.1",
+  "version": "1.3.0",
   "description": "Infernal Cinema",
   "main": "server.js",
   "scripts": {
