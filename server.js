@@ -1,23 +1,26 @@
 const express = require('express');
 const mysql = require('mysql2/promise');
 const axios = require('axios');
-const cheerio = require('cheerio');
 const path = require('path');
-const fs = require('fs');
-const { getEnabledMovieSources, buildMovieUrl, getEnabledSeriesSources, buildSeriesUrl } = require('./sources');
 require('dotenv').config();
+
+const { getEnabledMovieSources, buildMovieUrl, getEnabledSeriesSources, buildSeriesUrl } = require('./sources');
 
 const app = express();
 app.use(express.json());
 app.use(express.static(__dirname));
 
+/* ───────────────────────── Database ───────────────────────── */
 const pool = mysql.createPool({
   host: process.env.TIDB_HOST,
-  port: process.env.TIDB_PORT,
+  port: process.env.TIDB_PORT || 4000,
   user: process.env.TIDB_USER,
   password: process.env.TIDB_PASSWORD,
   database: process.env.TIDB_DATABASE,
-  ssl: { rejectUnauthorized: true }
+  ssl: { rejectUnauthorized: true },
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
 });
 
 const TMDB_BASE = 'https://api.themoviedb.org/3';
@@ -26,311 +29,162 @@ const TMDB_BACKDROP = 'https://image.tmdb.org/t/p/original';
 const TMDB_KEY = process.env.TMDB_API_KEY;
 
 const genreMap = {
-  28: 'Action', 12: 'Adventure', 16: 'Animation', 35: 'Comedy', 80: 'Crime',
-  18: 'Drama', 14: 'Fantasy', 27: 'Horror', 9648: 'Mystery', 878: 'Sci-Fi', 
-  53: 'Thriller', 10752: 'War', 37: 'Western', 10749: 'Romance', 10402: 'Music', 
-  99: 'Documentary', 10751: 'Family'
+  28: 'Action', 12: 'Adventure', 16: 'Animation', 35: 'Comedy', 80: 'Crime', 99: 'Documentary',
+  18: 'Drama', 10751: 'Family', 14: 'Fantasy', 36: 'History', 27: 'Horror', 10402: 'Music',
+  9648: 'Mystery', 10749: 'Romance', 878: 'Sci-Fi', 10770: 'TV Movie', 53: 'Thriller',
+  10752: 'War', 37: 'Western'
 };
 
-const tableMap = {
-  'movies': 'movies_cache',
-  'series': 'series_cache',
-  'anime': 'anime_cache'
-};
+const tableMap = { movies: 'movies_cache', series: 'series_cache', anime: 'anime_cache' };
 
-// --- Auth Route ---
+/* ─────────────── Schema bootstrap (auto-creates the exact structure) ─────────────── */
+async function ensureSchema() {
+  const ddl = [
+    `CREATE TABLE IF NOT EXISTS users (
+       id INT AUTO_INCREMENT PRIMARY KEY,
+       username VARCHAR(64) NOT NULL UNIQUE,
+       password VARCHAR(255) NOT NULL
+     )`,
+    ...Object.values(tableMap).map(t => `
+      CREATE TABLE IF NOT EXISTS ${t} (
+        tmdb_id INT NOT NULL PRIMARY KEY,
+        title VARCHAR(255),
+        release_date VARCHAR(10),
+        rating DECIMAL(4,2) DEFAULT 0,
+        genre VARCHAR(64),
+        poster VARCHAR(300),
+        backdrop VARCHAR(300),
+        overview TEXT,
+        KEY idx_release (release_date)
+      )`)
+  ];
+  for (const q of ddl) await pool.query(q);
+
+  const [[{ c }]] = await pool.query('SELECT COUNT(*) AS c FROM users');
+  if (c === 0) {
+    await pool.query('INSERT INTO users (username, password) VALUES (?, ?)', ['admin', 'admin']);
+    console.log('✓ Default user created → admin / admin');
+  }
+}
+ensureSchema()
+  .then(() => console.log('✓ Database schema ready'))
+  .catch(e => console.error('Schema init failed (is the DB up?):', e.message));
+
+/* ───────────────────────── Auth ───────────────────────── */
 app.post('/api/login', async (req, res) => {
-  const { username, password } = req.body;
+  const { username, password } = req.body || {};
+  if (!username || !password) return res.status(400).json({ success: false });
   try {
-    const [rows] = await pool.query('SELECT * FROM users WHERE username = ? AND password = ?', [username, password]);
+    const [rows] = await pool.query('SELECT id FROM users WHERE username = ? AND password = ? LIMIT 1', [username, password]);
     res.json({ success: rows.length > 0 });
-  } catch (err) { res.status(500).json({ success: false }); }
+  } catch (err) {
+    console.error('Login error:', err.message);
+    res.status(500).json({ success: false });
+  }
 });
 
-// --- Sync Engine State ---
-let syncState = { isSyncing: false, currentPage: 0, totalItems: 0, category: 'movies' };
+/* ───────────────────────── TMDB Sync Engine ───────────────────────── */
+let syncState = { isSyncing: false, currentPage: 0, totalItems: 0, category: 'idle' };
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function fetchWithRetry(url, retries = 3) {
+  let lastErr;
+  for (let i = 0; i < retries; i++) {
+    try { return await axios.get(url, { timeout: 15000 }); }
+    catch (err) { lastErr = err; await sleep(2500 * (i + 1)); }
+  }
+  throw lastErr;
+}
 
 app.get('/api/start-sync', async (req, res) => {
   if (syncState.isSyncing) return res.json({ msg: 'Already syncing', ...syncState });
-  syncState.isSyncing = true;
-  syncState.currentPage = 0;
-  syncState.totalItems = 0;
-  runSync();
-  res.json({ msg: 'Sync started', ...syncState });
+  try {
+    let total = 0;
+    for (const t of Object.values(tableMap)) {
+      const [[row]] = await pool.query(`SELECT COUNT(*) AS c FROM ${t}`);
+      total += row.c;
+    }
+    syncState = { isSyncing: true, currentPage: 0, totalItems: total, category: 'movies' };
+    runSync();
+    res.json({ msg: 'Sync started', ...syncState });
+  } catch (err) {
+    res.status(500).json({ msg: 'Database error', isSyncing: false, currentPage: 0, totalItems: 0, category: 'idle' });
+  }
 });
 
 app.get('/api/sync-status', (req, res) => res.json(syncState));
 
 async function runSync() {
+  const today = new Date().toISOString().slice(0, 10);
   const categories = [
-    { name: 'movies', url: `${TMDB_BASE}/discover/movie?api_key=${TMDB_KEY}&sort_by=primary_release_date.desc&page=` },
-    { name: 'series', url: `${TMDB_BASE}/discover/tv?api_key=${TMDB_KEY}&sort_by=first_air_date.desc&page=` },
-    { name: 'anime', url: `${TMDB_BASE}/discover/tv?api_key=${TMDB_KEY}&with_genres=16&with_original_language=ja&sort_by=first_air_date.desc&page=` }
+    { name: 'movies', url: `${TMDB_BASE}/discover/movie?api_key=${TMDB_KEY}&sort_by=primary_release_date.desc&include_adult=false&primary_release_date.lte=${today}&page=` },
+    { name: 'series', url: `${TMDB_BASE}/discover/tv?api_key=${TMDB_KEY}&sort_by=first_air_date.desc&include_adult=false&first_air_date.lte=${today}&page=` },
+    { name: 'anime',  url: `${TMDB_BASE}/discover/tv?api_key=${TMDB_KEY}&with_genres=16&with_original_language=ja&sort_by=first_air_date.desc&include_adult=false&first_air_date.lte=${today}&page=` }
   ];
 
-  for (const cat of categories) {
-    if (!syncState.isSyncing) break;
-    syncState.category = cat.name;
-    const tableName = tableMap[cat.name];
-    let page = 1, hasMore = true;
-    
-    while(hasMore && syncState.isSyncing) {
-      try {
-        const response = await axios.get(`${cat.url}${page}`);
-        const items = response.data.results;
-        if (items.length === 0) { hasMore = false; break; }
+  try {
+    for (const category of categories) {
+      if (!syncState.isSyncing) break;
+      syncState.category = category.name;
+      const tableName = tableMap[category.name];
+      let page = 1, hasMore = true;
 
-        const pageIds = items.map(m => m.id);
-        const [existingRows] = await pool.query(`SELECT tmdb_id FROM ${tableName} WHERE tmdb_id IN (?)`, [pageIds]);
-        
-        if (existingRows.length === items.length) {
-          console.log(`Page ${page} of ${cat.name} is fully cached. Stopping sync.`);
+      while (hasMore && syncState.isSyncing) {
+        let response;
+        try { response = await fetchWithRetry(`${category.url}${page}`); }
+        catch (err) {
+          console.error(`Sync: giving up on ${category.name} page ${page}: ${err.message}`);
           hasMore = false; break;
         }
 
-        for (const m of items) {
-          const genreId = m.genre_ids && m.genre_ids.length > 0 ? m.genre_ids[0] : null;
-          const genreName = genreId ? (genreMap[genreId] || 'Unknown') : 'Unknown';
-          const title = (m.title || m.name || '').replace(/'/g, "''");
-          const overview = (m.overview || '').replace(/'/g, "''");
-          const release_date = m.release_date || m.first_air_date || 'Unknown';
-          
-          await pool.query(
-            `INSERT INTO ${tableName} (tmdb_id, title, release_date, rating, genre, poster, backdrop, overview) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?) 
-             ON DUPLICATE KEY UPDATE tmdb_id=tmdb_id`,
-            [m.id, title, release_date, m.vote_average || 0, genreName, m.poster_path ? `${TMDB_IMG}${m.poster_path}` : '', m.backdrop_path ? `${TMDB_BACKDROP}${m.backdrop_path}` : '', overview]
-          );
-          syncState.totalItems++;
+        const items = response.data.results || [];
+        if (!items.length) { hasMore = false; break; }
+
+        // Early-stop: newest-first ordering means a fully cached page = nothing new left
+        const pageIds = items.map(m => m.id).filter(Boolean);
+        if (pageIds.length) {
+          const [existing] = await pool.query(`SELECT tmdb_id FROM ${tableName} WHERE tmdb_id IN (?)`, [pageIds]);
+          if (existing.length === items.length) {
+            console.log(`Sync: ${category.name} page ${page} fully cached — skipping rest of category.`);
+            hasMore = false; break;
+          }
         }
-        
+
+        for (const m of items) {
+          const genreId = (m.genre_ids && m.genre_ids[0]) || null;
+          const genreName = genreId ? (genreMap[genreId] || 'Unknown') : 'Unknown';
+          try {
+            const [result] = await pool.query(
+              `INSERT INTO ${tableName} (tmdb_id, title, release_date, rating, genre, poster, backdrop, overview)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON DUPLICATE KEY UPDATE tmdb_id = tmdb_id`,
+              [
+                m.id,
+                m.title || m.name || 'Untitled',
+                m.release_date || m.first_air_date || null,   // NULL (not 'Unknown') so date filters work
+                m.vote_average || 0,
+                genreName,
+                m.poster_path ? TMDB_IMG + m.poster_path : null,
+                m.backdrop_path ? TMDB_BACKDROP + m.backdrop_path : null,
+                m.overview || ''
+              ]
+            );
+            if (result.affectedRows === 1) syncState.totalItems++;
+          } catch (e) { /* skip bad row */ }
+        }
+
         syncState.currentPage = page;
         page++;
-        if (page % 30 === 0) await new Promise(resolve => setTimeout(resolve, 20000));
-        else await new Promise(resolve => setTimeout(resolve, 250));
-      } catch (err) {
-        console.error(`Sync error on ${cat.name} page ${page}:`, err.message);
-        hasMore = false;
+        await sleep(page % 40 === 0 ? 15000 : 300);
       }
     }
+    console.log('TMDB sync finished.');
+  } catch (err) {
+    console.error('Sync crashed:', err.message);
+  } finally {
+    syncState.isSyncing = false;
   }
-  syncState.isSyncing = false;
-  console.log('TMDB Sync Complete!');
 }
 
-// --- Get Movies (Only items <= 2 years old) ---
-app.get('/api/movies', async (req, res) => {
-  try {
-    const currentYear = new Date().getFullYear();
-    const minDate = `${currentYear - 2}-01-01`;
-    
-    const query = `
-      SELECT 'films' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM movies_cache WHERE release_date >= ?
-      UNION ALL
-      SELECT 'series' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM series_cache WHERE release_date >= ?
-      UNION ALL
-      SELECT 'anime' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM anime_cache WHERE release_date >= ?
-      ORDER BY rating DESC LIMIT 500
-    `;
-    const [rows] = await pool.query(query, [minDate, minDate, minDate]);
-    res.json(rows);
-  } catch (err) { 
-    console.error(err);
-    res.status(500).json({ error: 'Database error' }); 
-  }
-});
-
-// --- Get Single Item Details ---
-app.get('/api/movie/:id', async (req, res) => {
-  try {
-    const id = req.params.id;
-    const query = `
-      SELECT 'films' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM movies_cache WHERE tmdb_id = ?
-      UNION ALL
-      SELECT 'series' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM series_cache WHERE tmdb_id = ?
-      UNION ALL
-      SELECT 'anime' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM anime_cache WHERE tmdb_id = ?
-    `;
-    const [rows] = await pool.query(query, [id, id, id]);
-    if (rows.length > 0) res.json(rows[0]);
-    else res.status(404).json({ error: 'Not cached yet' });
-  } catch (err) { res.status(500).json({ error: 'Database error' }); }
-});
-
-// --- Get Seasons & Episodes for Series/Anime ---
-app.get('/api/seasons/:id', async (req, res) => {
-  try {
-    const r = await axios.get(`${TMDB_BASE}/tv/${req.params.id}?api_key=${TMDB_KEY}`);
-    const seasons = r.data.seasons.filter(s => s.season_number > 0).map(s => ({
-      id: s.id,
-      name: s.name,
-      season_number: s.season_number,
-      episode_count: s.episode_count,
-      poster: s.poster_path ? `${TMDB_IMG}${s.poster_path}` : ''
-    }));
-    res.json(seasons);
-  } catch (e) { res.status(500).json([]); }
-});
-
-// --- Deep Database Search (Strictly by Item Name) ---
-app.get('/api/search', async (req, res) => {
-  const q = req.query.q;
-  if (!q) return res.json([]);
-  try {
-    const query = `
-      SELECT 'films' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM movies_cache WHERE title LIKE ?
-      UNION ALL
-      SELECT 'series' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM series_cache WHERE title LIKE ?
-      UNION ALL
-      SELECT 'anime' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM anime_cache WHERE title LIKE ?
-      LIMIT 24
-    `;
-    const [rows] = await pool.query(query, [`%${q}%`, `%${q}%`, `%${q}%`]);
-    res.json(rows);
-  } catch (err) { res.status(500).json([]); }
-});
-
-app.get('/api/categories', (req, res) => {
-  res.json([
-    {id: 'all', name: 'All'}, {id: 'Action', name: 'Action'}, {id: 'Adventure', name: 'Adventure'},
-    {id: 'Animation', name: 'Animation'}, {id: 'Comedy', name: 'Comedy'}, {id: 'Crime', name: 'Crime'},
-    {id: 'Drama', name: 'Drama'}, {id: 'Fantasy', name: 'Fantasy'}, {id: 'Horror', name: 'Horror'},
-    {id: 'Mystery', name: 'Mystery'}, {id: 'Sci-Fi', name: 'Sci-Fi'}, {id: 'Thriller', name: 'Thriller'}
-  ]);
-});
-
-// --- Advanced Dynamic Sources Engine ---
-app.get('/api/sources', async (req, res) => {
-  const movieId = req.query.id;
-  const season = req.query.s || 1;
-  const episode = req.query.e || 1;
-  let mediaType = 'movie';
-
-  try {
-    const [rows] = await pool.query(`
-      SELECT 'movie' as type FROM movies_cache WHERE tmdb_id = ?
-      UNION ALL
-      SELECT 'series' as type FROM series_cache WHERE tmdb_id = ?
-      UNION ALL
-      SELECT 'anime' as type FROM anime_cache WHERE tmdb_id = ?
-    `, [movieId, movieId, movieId]);
-    
-    if (rows.length > 0) {
-      mediaType = rows[0].type;
-      if (mediaType === 'series' || mediaType === 'anime') mediaType = 'tv';
-    }
-  } catch (e) {}
-
-  const isTV = mediaType === 'tv';
-  const tmdbEndpoint = isTV ? 'tv' : 'movie';
-
-  let imdbId = null;
-  try {
-    const tmdbRes = await axios.get(`${TMDB_BASE}/${tmdbEndpoint}/${movieId}/external_ids?api_key=${TMDB_KEY}`, { timeout: 5000 });
-    imdbId = tmdbRes.data.imdb_id;
-  } catch (e) { console.error("Failed to fetch IMDb ID"); }
-
-  const rawSources = [];
-  const searchPromises = [];
-
-  const getCleanName = (url) => {
-    try {
-      const hostname = new URL(url).hostname.replace('www.', '');
-      const parts = hostname.split('.');
-      return parts.length > 2 ? parts[parts.length - 2] : parts[0];
-    } catch { return 'Unknown Server'; }
-  };
-
-  // SEARCH ENGINE 1: 2Embed.cc API
-  if (imdbId) {
-    searchPromises.push(
-      axios.get(`https://www.2embed.cc/ajax/embed/list?id=${imdbId}${isTV ? `&s=${season}&e=${episode}` : ''}`, {
-        headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.2embed.cc/' },
-        timeout: 5000
-      }).then(response => {
-        if (response.data?.status === 1 && response.data?.result) {
-          response.data.result.forEach(src => {
-            rawSources.push({ name: src.providerName || getCleanName(src.source), url: src.source, status: "online" });
-          });
-        }
-      }).catch(() => {})
-    );
-  }
-
-  // SEARCH ENGINE 2: VidSrc.to API
-  searchPromises.push(
-    axios.get(`https://vidsrc.to/ajax/embed/list?id=${movieId}`, {
-      headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://vidsrc.to/' },
-      timeout: 5000
-    }).then(response => {
-      const $ = cheerio.load(response.data);
-      $('.server').each((i, el) => {
-        const url = $(el).attr('data-embed') || '';
-        if (url) rawSources.push({ name: `VidSrc - ${getCleanName(url)}`, url: url, status: "online" });
-      });
-    }).catch(() => {})
-  );
-
-  // SEARCH ENGINE 3: SmashyStream API
-  searchPromises.push(
-    axios.get(`https://embed.smashystream.com/api/fetch/${tmdbEndpoint}?id=${movieId}${isTV ? `&s=${season}&e=${episode}` : ''}`, {
-      headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://embed.smashystream.com/' },
-      timeout: 5000
-    }).then(response => {
-      if (response.data?.status === 1 && response.data?.result) {
-        response.data.result.flat().forEach(src => {
-          if (src.url) {
-            const randSuffix = Math.floor(Math.random() * 99);
-            rawSources.push({ name: `Smashy - ${src.provider || getCleanName(src.url)} ${randSuffix}`, url: src.url, status: "online" });
-          }
-        });
-      }
-    }).catch(() => {})
-  );
-
-  await Promise.race([
-    Promise.all(searchPromises),
-    new Promise(resolve => setTimeout(resolve, 6000))
-  ]);
-
-  // Add Static Sources from sources.js
-  if (isTV) {
-    const seriesSources = getEnabledSeriesSources();
-    seriesSources.forEach(src => {
-      const url = buildSeriesUrl(src.id, movieId, season, episode);
-      rawSources.push({ name: src.name, url: url, status: "online" });
-    });
-  } else {
-    const movieSources = getEnabledMovieSources();
-    movieSources.forEach(src => {
-      const url = buildMovieUrl(src.id, movieId);
-      rawSources.push({ name: src.name, url: url, status: "online" });
-    });
-  }
-
-  // DEDUPLICATION FILTER
-  const dynamicSources = [];
-  const seenUrls = new Set();
-  
-  rawSources.forEach(src => {
-    if (!seenUrls.has(src.url)) {
-      seenUrls.add(src.url);
-      dynamicSources.push({ ...src, ping: Math.floor(Math.random() * 100) + 20 });
-    }
-  });
-
-  res.json(dynamicSources);
-});
-
-app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Z-Stream server running on port ${PORT}`);
-  
-  // 14-Minute Ping to keep Render alive 24/7
-  const URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
-  setInterval(() => {
-    axios.get(URL).then(() => console.log('Self-ping successful')).catch(() => {});
-  }, 14 * 60 * 1000);
-});
+/* ───────────────────────── Catalog (≤ 2 years old,
