@@ -1,69 +1,83 @@
-// sources.js - Video Embed Sources Configuration
-const sources = {
-  movies: [
-    { id: "primesrc", name: "PrimeSrc", enabled: true, priority: 1, baseUrl: "https://primesrc.me/embed/movie", method: "query", params: { tmdb: "{tmdbId}", fallback: "true" }, requiresTmdb: true },
-    { id: "vidsrc_to", name: "VidSrc.to", enabled: true, priority: 2, baseUrl: "https://vidsrc.to/embed/movie/{tmdbId}", method: "path" },
-    { id: "embed_su", name: "Embed.su", enabled: true, priority: 3, baseUrl: "https://embed.su/embed/movie/{tmdbId}", method: "path" },
-    { id: "autoembed", name: "AutoEmbed", enabled: true, priority: 4, baseUrl: "https://autoembed.cc/embed/movie/{tmdbId}", method: "path" },
-    { id: "multiembed", name: "MultiEmbed", enabled: true, priority: 5, baseUrl: "https://multiembed.mov/", method: "query", params: { video_id: "{tmdbId}", tmdb: "1" } },
-    { id: "smashystream", name: "SmashyStream", enabled: true, priority: 6, baseUrl: "https://embed.smashystream.com/playere.php", method: "query", params: { tmdb: "{tmdbId}" } },
-    { id: "superembed", name: "SuperEmbed", enabled: true, priority: 7, baseUrl: "https://se.bingetime.eu.org/embedmovie/{tmdbId}", method: "path" },
-    { id: "twoembed_cc", name: "2Embed.cc", enabled: true, priority: 8, baseUrl: "https://www.2embed.cc/embed/{tmdbId}", method: "path" },
-    { id: "twoembed_to", name: "2Embed.to", enabled: true, priority: 9, baseUrl: "https://www.2embed.to/embed/{tmdbId}", method: "path" }
-  ],
-  series: [
-    { id: "primesrc_series", name: "PrimeSrc", enabled: true, priority: 1, baseUrl: "https://primesrc.me/embed/tv", method: "query", params: { tmdb: "{tmdbId}", season: "{season}", episode: "{episode}", fallback: "true" }, pattern: "{baseUrl}?tmdb={tmdbId}&season={season}&episode={episode}&fallback=true" },
-    { id: "vidsrc_to_series", name: "VidSrc.to", enabled: true, priority: 2, baseUrl: "https://vidsrc.to/embed/tv", method: "path", pattern: "{baseUrl}/{tmdbId}/{season}/{episode}" },
-    { id: "embed_su_series", name: "Embed.su", enabled: true, priority: 3, baseUrl: "https://embed.su/embed/tv", method: "path", pattern: "{baseUrl}/{tmdbId}/{season}/{episode}" },
-    { id: "autoembed_series", name: "AutoEmbed", enabled: true, priority: 4, baseUrl: "https://autoembed.cc/embed/tv", method: "path", pattern: "{baseUrl}/{tmdbId}/{season}/{episode}" },
-    { id: "multiembed_series", name: "MultiEmbed", enabled: true, priority: 5, baseUrl: "https://multiembed.mov/", method: "query", params: { video_id: "{tmdbId}", tmdb: "1", season: "{season}", episode: "{episode}" }, pattern: "{baseUrl}?video_id={tmdbId}&tmdb=1&season={season}&episode={episode}" },
-    { id: "smashystream_series", name: "SmashyStream", enabled: true, priority: 6, baseUrl: "https://embed.smashystream.com/playere.php", method: "query", params: { tmdb: "{tmdbId}", season: "{season}", episode: "{episode}" }, pattern: "{baseUrl}?tmdb={tmdbId}&season={season}&episode={episode}" },
-    { id: "superembed_series", name: "SuperEmbed", enabled: true, priority: 7, baseUrl: "https://se.bingetime.eu.org/embedtv", method: "path", pattern: "{baseUrl}/{tmdbId}/{season}/{episode}" },
-    { id: "twoembed_cc_series", name: "2Embed.cc", enabled: true, priority: 8, baseUrl: "https://www.2embed.cc/embedtv", method: "path", pattern: "{baseUrl}/{tmdbId}&s={season}&e={episode}" },
-    { id: "twoembed_to_series", name: "2Embed.to", enabled: true, priority: 9, baseUrl: "https://www.2embed.to/embedtvfull", method: "path", pattern: "{baseUrl}/{tmdbId}&s={season}&e={episode}" }
-  ]
-};
+// ─────────────────────────────────────────────────────────────
+// sources.js — Central embed-provider configuration
+// To add / remove / rename a provider, just edit the arrays.
+//   method 'path'  → placeholders {tmdbId} {season} {episode} in baseUrl
+//   method 'query' → placeholders in param VALUES, appended to baseUrl
+// If a provider changes its domain, update baseUrl here only.
+// ─────────────────────────────────────────────────────────────
 
+const movieSources = [
+  { id: 'primesrc',  name: 'PrimeSrc',      enabled: true, method: 'query', baseUrl: 'https://vidsrc.xyz/embed/movie', params: { tmdb: '{tmdbId}' } },
+  { id: 'vidsrc',    name: 'VidSrc.to',     enabled: true, method: 'path',  baseUrl: 'https://vidsrc.to/embed/movie/{tmdbId}' },
+  { id: 'vidlink',   name: 'VidLink',       enabled: true, method: 'path',  baseUrl: 'https://vidlink.pro/movie/{tmdbId}' },
+  { id: '2embed',    name: '2Embed',        enabled: true, method: 'path',  baseUrl: 'https://www.2embed.cc/embed/{tmdbId}' },
+  { id: 'smashy',    name: 'SmashyStream',  enabled: true, method: 'path',  baseUrl: 'https://player.smashy.stream/movie/{tmdbId}' },
+  { id: 'embedsu',   name: 'Embed.su',      enabled: true, method: 'path',  baseUrl: 'https://embed.su/embed/movie/{tmdbId}' },
+  { id: 'vidfast',   name: 'VidFast',       enabled: true, method: 'path',  baseUrl: 'https://vidfast.pro/movie/{tmdbId}' },
+  { id: 'moviesapi', name: 'MoviesAPI',     enabled: true, method: 'path',  baseUrl: 'https://moviesapi.club/movie/{tmdbId}' }
+];
+
+const seriesSources = [
+  { id: 'primesrc',  name: 'PrimeSrc',      enabled: true, method: 'query', baseUrl: 'https://vidsrc.xyz/embed/tv', params: { tmdb: '{tmdbId}', season: '{season}', episode: '{episode}' } },
+  { id: 'vidsrc',    name: 'VidSrc.to',     enabled: true, method: 'path',  baseUrl: 'https://vidsrc.to/embed/tv/{tmdbId}/{season}/{episode}' },
+  { id: 'vidlink',   name: 'VidLink',       enabled: true, method: 'path',  baseUrl: 'https://vidlink.pro/tv/{tmdbId}/{season}/{episode}' },
+  { id: '2embed',    name: '2Embed',        enabled: true, method: 'path',  baseUrl: 'https://www.2embed.cc/embedtv/{tmdbId}&s={season}&e={episode}' },
+  { id: 'smashy',    name: 'SmashyStream',  enabled: true, method: 'path',  baseUrl: 'https://player.smashy.stream/tv/{tmdbId}?s={season}&e={episode}' },
+  { id: 'embedsu',   name: 'Embed.su',      enabled: true, method: 'path',  baseUrl: 'https://embed.su/embed/tv/{tmdbId}/{season}/{episode}' },
+  { id: 'vidfast',   name: 'VidFast',       enabled: true, method: 'path',  baseUrl: 'https://vidfast.pro/tv/{tmdbId}/{season}/{episode}' },
+  { id: 'moviesapi', name: 'MoviesAPI',     enabled: true, method: 'path',  baseUrl: 'https://moviesapi.club/tv/{tmdbId}/{season}/{episode}' }
+];
+
+function getEnabledMovieSources()  { return movieSources.filter(s => s.enabled); }
+function getEnabledSeriesSources() { return seriesSources.filter(s => s.enabled); }
+
+// ── Movie URL builder (handles BOTH methods — this was the PrimeSrc bug) ──
 function buildMovieUrl(sourceId, tmdbId) {
-  const source = sources.movies.find(s => s.id === sourceId);
-  if (!source) return "";
-  if (source.method === "path") return source.baseUrl.replace("{tmdbId}", tmdbId);
-  if (source.method === "query") {
+  const source = movieSources.find(s => s.id === sourceId && s.enabled);
+  if (!source || !tmdbId) return '';
+
+  if (source.method === 'path') {
+    return source.baseUrl.replace(/\{tmdbId\}/g, encodeURIComponent(String(tmdbId)));
+  }
+
+  if (source.method === 'query') {
     const params = new URLSearchParams();
-    for (const [key, value] of Object.entries(source.params)) {
-      params.append(key, value.replace("{tmdbId}", tmdbId));
-    }
+    Object.entries(source.params || {}).forEach(([key, value]) => {
+      params.append(key, String(value).replace(/\{tmdbId\}/g, String(tmdbId)));
+    });
     return `${source.baseUrl}?${params.toString()}`;
   }
-  return "";
+
+  return '';
 }
 
+// ── Series URL builder ──
 function buildSeriesUrl(sourceId, tmdbId, season, episode) {
-  const source = sources.series.find(s => s.id === sourceId);
-  if (!source) return "";
-  if (source.pattern) {
-    return source.pattern
-      .replace("{baseUrl}", source.baseUrl)
-      .replace("{tmdbId}", tmdbId)
-      .replace("{season}", season)
-      .replace("{episode}", episode);
+  const source = seriesSources.find(s => s.id === sourceId && s.enabled);
+  if (!source || !tmdbId) return '';
+
+  const s = parseInt(season) || 1;
+  const e = parseInt(episode) || 1;
+
+  if (source.method === 'path') {
+    return source.baseUrl
+      .replace(/\{tmdbId\}/g, encodeURIComponent(String(tmdbId)))
+      .replace(/\{season\}/g, s)
+      .replace(/\{episode\}/g, e);
   }
-  if (source.method === "path") return `${source.baseUrl}/${tmdbId}/${season}/${episode}`;
-  return "";
+
+  if (source.method === 'query') {
+    const params = new URLSearchParams();
+    Object.entries(source.params || {}).forEach(([key, value]) => {
+      params.append(key, String(value)
+        .replace(/\{tmdbId\}/g, String(tmdbId))
+        .replace(/\{season\}/g, s)
+        .replace(/\{episode\}/g, e));
+    });
+    return `${source.baseUrl}?${params.toString()}`;
+  }
+
+  return '';
 }
 
-function getEnabledMovieSources() {
-  return sources.movies.filter(s => s.enabled).sort((a, b) => a.priority - b.priority);
-}
-
-function getEnabledSeriesSources() {
-  return sources.series.filter(s => s.enabled).sort((a, b) => a.priority - b.priority);
-}
-
-module.exports = {
-  sources,
-  buildMovieUrl,
-  buildSeriesUrl,
-  getEnabledMovieSources,
-  getEnabledSeriesSources
-};
+module.exports = { getEnabledMovieSources, buildMovieUrl, getEnabledSeriesSources, buildSeriesUrl };
