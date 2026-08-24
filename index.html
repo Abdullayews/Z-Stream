@@ -119,49 +119,52 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
 .catpill:hover { background: rgba(229,9,20,0.15); color: var(--text); transform: translateY(-1px); }
 .catpill.active { background: linear-gradient(135deg, rgba(229,9,20,0.25), rgba(255,26,26,0.15)); border-color: var(--lava); color: #fff; }
 
-/* ── Sections — strict 5×2 grid (20 items per category on home) ── */
+/* ── Sections — 10×2 grid (20 items max per category on home) ── */
 .sec-head { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 28px; width: 100%; padding: 0 40px; }
 .sec-title { font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: 700; letter-spacing: 2.5px; text-transform: uppercase; display: flex; align-items: center; gap: 12px; }
 .sec-title::before { content: ''; width: 5px; height: 24px; background: var(--lava); border-radius: 3px; box-shadow: 0 0 16px var(--lava); }
-.grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 28px 20px; margin-bottom: 64px; width: 100%; padding: 0 40px; }
-@media (max-width: 1200px) { .grid { grid-template-columns: repeat(4, 1fr); } }
-@media (max-width: 950px)  { .grid { grid-template-columns: repeat(3, 1fr); } }
-@media (max-width: 640px)  { .grid { grid-template-columns: repeat(2, 1fr); gap: 20px 14px; } }
+.grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 24px 12px; margin-bottom: 64px; width: 100%; padding: 0 40px; }
+@media (max-width: 1500px) { .grid { grid-template-columns: repeat(8, 1fr); } }
+@media (max-width: 1250px) { .grid { grid-template-columns: repeat(6, 1fr); } }
+@media (max-width: 1000px) { .grid { grid-template-columns: repeat(5, 1fr); } }
+@media (max-width: 780px)  { .grid { grid-template-columns: repeat(4, 1fr); } }
+@media (max-width: 560px)  { .grid { grid-template-columns: repeat(3, 1fr); gap: 18px 10px; } }
+@media (max-width: 400px)  { .grid { grid-template-columns: repeat(2, 1fr); } }
 
-/* ── Cards ── */
-.card { position: relative; border-radius: 20px; overflow: hidden; cursor: pointer; transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1); border: 1px solid var(--border); background: rgba(10, 0, 0, 0.5); }
-.card:hover { transform: translateY(-12px) scale(1.02); border-color: var(--lava); box-shadow: 0 28px 56px rgba(0,0,0,0.8), 0 0 0 1px rgba(229,9,20,0.2), 0 0 80px rgba(229,9,20,0.15); }
+/* ── Cards (compacted for the denser 10-column grid) ── */
+.card { position: relative; border-radius: 16px; overflow: hidden; cursor: pointer; transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1); border: 1px solid var(--border); background: rgba(10, 0, 0, 0.5); }
+.card:hover { transform: translateY(-10px) scale(1.02); border-color: var(--lava); box-shadow: 0 28px 56px rgba(0,0,0,0.8), 0 0 0 1px rgba(229,9,20,0.2), 0 0 80px rgba(229,9,20,0.15); }
 .card-media { position: relative; overflow: hidden; }
 .card-img { width: 100%; aspect-ratio: 2/3; object-fit: cover; display: block; transition: transform 0.6s; }
 .card:hover .card-img { transform: scale(1.08); }
-.card-overlay { position: absolute; inset: 0; background: linear-gradient(180deg, transparent 35%, rgba(0,0,0,0.95) 100%); opacity: 0; transition: opacity 0.4s; display: flex; flex-direction: column; justify-content: flex-end; padding: 20px; z-index: 2; }
+.card-overlay { position: absolute; inset: 0; background: linear-gradient(180deg, transparent 35%, rgba(0,0,0,0.95) 100%); opacity: 0; transition: opacity 0.4s; display: flex; flex-direction: column; justify-content: flex-end; padding: 16px; z-index: 2; }
 .card:hover .card-overlay { opacity: 1; }
-.playbtn { width: 52px; height: 52px; border-radius: 50%; background: linear-gradient(135deg, var(--magma), var(--lava)); display: flex; align-items: center; justify-content: center; margin: 0 auto 14px; box-shadow: 0 6px 24px rgba(229,9,20,0.6); transition: all 0.35s; }
+.playbtn { width: 46px; height: 46px; border-radius: 50%; background: linear-gradient(135deg, var(--magma), var(--lava)); display: flex; align-items: center; justify-content: center; margin: 0 auto 12px; box-shadow: 0 6px 24px rgba(229,9,20,0.6); transition: all 0.35s; }
 .card:hover .playbtn { transform: scale(1.12); }
-.playbtn svg { width: 20px; height: 20px; fill: white; margin-left: 2px; }
-.card-badges { position: absolute; top: 14px; left: 14px; right: 14px; display: flex; justify-content: flex-start; z-index: 3; pointer-events: none; }
-.badge-rate { display: flex; align-items: center; gap: 5px; padding: 6px 11px; background: rgba(0,0,0,0.7); backdrop-filter: blur(16px); border-radius: 10px; font-size: 11.5px; font-weight: 700; color: var(--gold); }
-.badge-rate::before { content: ''; width: 7px; height: 7px; background: var(--gold); border-radius: 50%; box-shadow: 0 0 8px var(--gold); }
-.card-info { padding: 16px; }
-.card-title { font-size: 14.5px; font-weight: 600; color: var(--text); margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.card-meta { font-size: 11.5px; color: var(--ash); display: flex; align-items: center; gap: 10px; }
+.playbtn svg { width: 18px; height: 18px; fill: white; margin-left: 2px; }
+.card-badges { position: absolute; top: 10px; left: 10px; right: 10px; display: flex; justify-content: flex-start; z-index: 3; pointer-events: none; }
+.badge-rate { display: flex; align-items: center; gap: 4px; padding: 4px 8px; background: rgba(0,0,0,0.7); backdrop-filter: blur(16px); border-radius: 8px; font-size: 10.5px; font-weight: 700; color: var(--gold); }
+.badge-rate::before { content: ''; width: 6px; height: 6px; background: var(--gold); border-radius: 50%; box-shadow: 0 0 8px var(--gold); }
+.card-info { padding: 10px 12px; }
+.card-title { font-size: 12.5px; font-weight: 600; color: var(--text); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card-meta { font-size: 10.5px; color: var(--ash); display: flex; align-items: center; gap: 8px; }
 .card-meta .sep { width: 3px; height: 3px; background: var(--lava); border-radius: 50%; flex-shrink: 0; }
-.card-fav { position: absolute; top: 14px; right: 14px; z-index: 5; width: 32px; height: 32px; border-radius: 10px; background: rgba(0,0,0,0.6); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.25s; opacity: 0; transform: scale(0.8); color: var(--ash); }
+.card-fav { position: absolute; top: 10px; right: 10px; z-index: 5; width: 28px; height: 28px; border-radius: 8px; background: rgba(0,0,0,0.6); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.25s; opacity: 0; transform: scale(0.8); color: var(--ash); }
 .card:hover .card-fav { opacity: 1; transform: scale(1); }
 .card-fav:hover { background: rgba(229,9,20,0.4); border-color: var(--lava); }
 .card-fav.active { color: var(--lava); }
 
-.skel-card { border-radius: 20px; overflow: hidden; background: rgba(10, 0, 0, 0.5); border: 1px solid var(--border); }
+.skel-card { border-radius: 16px; overflow: hidden; background: rgba(10, 0, 0, 0.5); border: 1px solid var(--border); }
 .skel-img { width: 100%; aspect-ratio: 2/3; background: linear-gradient(90deg, #100000 25%, rgba(229,9,20,0.1) 50%, #100000 75%); background-size: 200% 100%; animation: shimmer 1.8s infinite; }
-.skel-line { height: 14px; margin: 14px 16px; border-radius: 7px; background: linear-gradient(90deg, #100000 25%, rgba(229,9,20,0.1) 50%, #100000 75%); background-size: 200% 100%; animation: shimmer 1.8s infinite; }
-.skel-line.s { width: 55%; height: 10px; }
+.skel-line { height: 12px; margin: 10px 12px; border-radius: 6px; background: linear-gradient(90deg, #100000 25%, rgba(229,9,20,0.1) 50%, #100000 75%); background-size: 200% 100%; animation: shimmer 1.8s infinite; }
+.skel-line.s { width: 55%; height: 9px; }
 @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
 .empty { text-align: center; padding: 100px 20px; color: var(--ash); min-height: 70vh; display: none; flex-direction: column; justify-content: center; align-items: center; }
 .empty h3 { font-family: 'Orbitron', sans-serif; font-size: 18px; color: var(--fog); margin-bottom: 12px; }
 .empty p { font-size: 15px; max-width: 400px; color: var(--dust); }
 
-/* ── PLAYER — fits the screen, no white gaps ── */
+/* ── PLAYER ── */
 .portal { display: none; position: fixed; inset: 0; background: #000000; z-index: 1000; overflow: hidden; }
 .portal.on { display: flex; flex-direction: column; }
 .portal-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 40px; flex-shrink: 0; }
@@ -396,7 +399,7 @@ async function doLogin() {
 
   btn.disabled = true; btn.textContent = 'Connecting…';
   const ctrl = new AbortController();
-  const to = setTimeout(() => ctrl.abort(), 60000); // Render free-tier cold start can take ~50s
+  const to = setTimeout(() => ctrl.abort(), 60000);
 
   try {
     const r = await fetch(`${API_BASE}/login`, {
@@ -601,13 +604,13 @@ function renderHero(m) {
   $('hero').classList.add('visible');
 }
 
-/* ─────────── Rendering (20 per category, 5×2 grid) ─────────── */
+/* ─────────── Rendering — 10×2 grid, max 20 items per category ─────────── */
 function renderCats(cats) {
   const bar = $('catbar');
   bar.innerHTML = cats.map(c => `<div class="catpill ${c.id === 'all' ? 'active' : ''}" data-cat="${esc(c.id)}">${esc(c.name)}</div>`).join('');
   bar.querySelectorAll('.catpill').forEach(p => p.addEventListener('click', () => filterCategory(p.dataset.cat, p)));
 }
-function skel(c = 10) { return Array.from({ length: c }, () => '<div class="skel-card"><div class="skel-img"></div><div class="skel-line"></div><div class="skel-line s"></div></div>').join(''); }
+function skel(c = 20) { return Array.from({ length: c }, () => '<div class="skel-card"><div class="skel-img"></div><div class="skel-line"></div><div class="skel-line s"></div></div>').join(''); }
 function card(m) {
   const fav = Cache.has('fav', m.id);
   const s = Number(m.season) || 1, e = Number(m.episode) || 1;
@@ -618,7 +621,7 @@ function card(m) {
       <div class="card-overlay"><div class="playbtn"><svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg></div></div>
     </div>
     <button class="card-fav ${fav ? 'active' : ''}" onclick="event.stopPropagation(); toggleFav(${m.id})" title="Toggle favorite">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="${fav ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2.2"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="${fav ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2.2"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
     </button>
     <div class="card-info">
       <div class="card-title">${esc(m.title)}</div>
@@ -629,7 +632,7 @@ function card(m) {
 function renderSection(title, movies, sid = '') {
   const id = sid || 's_' + Math.random().toString(36).slice(2, 11);
   const head = title ? `<div class="sec-head"><h2 class="sec-title">${esc(title)}</h2></div>` : '';
-  const items = movies.length > 0 ? movies.map(card).join('') : skel(10);
+  const items = movies.length > 0 ? movies.map(card).join('') : skel(20);
   $('sections').insertAdjacentHTML('beforeend', `${head}<div class="grid" id="${id}">${items}</div>`);
 }
 function renderSections(movies) {
@@ -721,12 +724,10 @@ async function loadSources() {
     return;
   }
 
-  // Bind via data-name + addEventListener → no inline-escaping bugs
   node.innerHTML = dynamicSources.map(s => `<div class="server-btn" data-name="${esc(s.name)}">${esc(s.name)}</div>`).join('');
   const btns = node.querySelectorAll('.server-btn');
   btns.forEach(btn => btn.addEventListener('click', () => selSrc(btn, btn.dataset.name)));
 
-  // Restore preferred server across episode changes, else first server
   const idx = Math.max(0, dynamicSources.findIndex(s => s.name === preferredSource));
   if (btns[idx]) selSrc(btns[idx], dynamicSources[idx].name);
 
@@ -749,22 +750,15 @@ function selSrc(btn, name) {
   const iframe = document.createElement('iframe');
   iframe.id = 'uvideo';
 
-  // ── FIX 1: referrerpolicy ──
-  // 'no-referrer' breaks providers that validate the referrer, and the old
-  // setting produced console spam + fallback popup behavior on some sources.
-  // 'strict-origin-when-cross-origin' sends just our origin — accepted by
-  // virtually every embed provider.
-  iframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
-
-  // ── FIX 2: sandbox blocks popup ads (e.g. intellipopup.com) ──
-  // We deliberately do NOT include 'allow-popups' or 'allow-top-navigation',
-  // so the embedded player cannot open popup ads or redirect this page.
-  // If a specific provider refuses to play, test by temporarily removing
-  // the sandbox attribute for that source.
-  iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
-
+  /* ══ MAXIMUM-COMPATIBILITY IFRAME ══
+     - NO sandbox attribute at all (sandboxing is what breaks players)
+     - 'no-referrer-when-downgrade' = most permissive referrer policy
+       browsers permit cross-site; providers that validate referrers work
+     - broad `allow` list so no feature is denied to the embed
+     - popups / redirects / top-navigation all permitted */
+  iframe.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
   iframe.setAttribute('allowfullscreen', 'true');
-  iframe.setAttribute('allow', 'fullscreen; autoplay; encrypted-media; picture-in-picture');
+  iframe.setAttribute('allow', 'autoplay; fullscreen; encrypted-media; picture-in-picture; accelerometer; gyroscope; clipboard-write; midi; screen-wake-lock; xr-spatial-tracking; gamepad; speaker-selection; display-capture');
   iframe.setAttribute('frameborder', '0');
   iframe.setAttribute('scrolling', 'no');
   iframe.style.cssText = 'width:100%;height:100%;border:none;display:block;background:#000;';
@@ -773,7 +767,6 @@ function selSrc(btn, name) {
   showVideoLoading(`Connecting to ${name}…`);
   vframe.appendChild(iframe);
 
-  // Small delay so the iframe is attached before navigation starts
   setTimeout(() => { iframe.src = source.url; }, 50);
 }
 
@@ -818,7 +811,7 @@ function selectSeason(s) {
   activeSeason = s;
   activeEpisode = 1;
   renderSeasons();
-  loadSources(); // refresh sources for new season without rebuilding the whole player
+  loadSources();
 }
 
 function selectEpisode(s, e) {
@@ -878,7 +871,7 @@ async function checkSyncStatus() {
 
 /* ─────────── Init ─────────── */
 async function init() {
-  $('sections').innerHTML = `<div class="sec-head"><h2 class="sec-title">Loading Database…</h2></div><div class="grid">${skel(10)}</div>`;
+  $('sections').innerHTML = `<div class="sec-head"><h2 class="sec-title">Loading Database…</h2></div><div class="grid">${skel(20)}</div>`;
   const [movies, cats] = await Promise.all([fetchMovies(), fetchCats()]);
   allMovies = Array.isArray(movies) ? movies : [];
   allCats = Array.isArray(cats) ? cats : [{ id: 'all', name: 'All' }];
