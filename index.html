@@ -36,7 +36,13 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
 .login-input:focus { border-color: var(--lava); box-shadow: 0 0 0 3px rgba(229,9,20,0.2); }
 .login-btn { width: 100%; padding: 14px; background: linear-gradient(135deg, var(--magma), var(--lava)); border: none; border-radius: 12px; color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.3s ease; text-transform: uppercase; }
 .login-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(229,9,20,0.5); }
-.login-error { color: var(--danger); text-align: center; margin-top: 16px; font-size: 13px; display: none; }
+.login-btn:disabled { opacity: 0.6; cursor: wait; }
+.login-error { color: var(--danger); text-align: center; margin-top: 16px; font-size: 13px; display: none; line-height: 1.6; }
+.login-error a { color: var(--solar); text-decoration: underline; }
+.login-status { display: none; background: rgba(229,9,20,0.08); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; font-size: 12.5px; color: var(--solar); margin-bottom: 16px; line-height: 1.5; }
+.login-status a { color: var(--flame); text-decoration: underline; }
+.login-hint { text-align: center; font-size: 11.5px; color: var(--dust); margin-top: 18px; }
+.login-hint b { color: var(--ash); }
 
 /* ── Topbar ── */
 .topbar { position: sticky; top: 0; z-index: 200; background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(30px) saturate(180%); border-bottom: 1px solid var(--border); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8); }
@@ -166,7 +172,6 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
 
 .portal-body { flex: 1; min-height: 0; overflow-y: auto; padding: 0 40px 48px; max-width: 1600px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
 
-/* Video frame: never taller than the viewport, always true 16:9, centered → zero abnormal whitespace */
 .vframe { position: relative; width: min(100%, calc((100vh - 170px) * 16 / 9)); max-height: calc(100vh - 170px); aspect-ratio: 16 / 9; margin: 0 auto; flex-shrink: 0; background: #000; border-radius: 12px; overflow: hidden; border: 1px solid var(--border); box-shadow: 0 20px 50px rgba(0,0,0,0.8); }
 @supports (height: 100dvh) {
   .vframe { width: min(100%, calc((100dvh - 170px) * 16 / 9)); max-height: calc(100dvh - 170px); }
@@ -246,10 +251,12 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
 <div id="loginPortal" class="login-portal">
   <div class="login-box">
     <h1>Z-Stream Access</h1>
+    <div id="loginStatus" class="login-status"></div>
     <input type="text" id="loginUser" class="login-input" placeholder="Username" autocomplete="off">
     <input type="password" id="loginPass" class="login-input" placeholder="Password" autocomplete="current-password">
-    <button class="login-btn" onclick="doLogin()">Enter the Abyss</button>
+    <button class="login-btn" id="loginBtn" onclick="doLogin()">Enter the Abyss</button>
     <div id="loginError" class="login-error">Invalid credentials. Try again.</div>
+    <p class="login-hint">First run? Default login is <b>admin / admin</b><br>(or the ADMIN_USER / ADMIN_PASS env vars).</p>
   </div>
 </div>
 
@@ -358,6 +365,7 @@ function imgFallback(img) { img.onerror = null; img.src = PLACEHOLDER; }
 function checkAuth() {
   if (localStorage.getItem('zs_auth') !== 'true') {
     $('loginPortal').style.display = 'flex';
+    probeHealth(); // surface DB problems before the user even types
   } else {
     $('loginPortal').style.display = 'none';
     init();
@@ -365,22 +373,68 @@ function checkAuth() {
     $('syncPanel').style.display = 'block';
   }
 }
+
+async function probeHealth() {
+  try {
+    const r = await fetch(`${API_BASE}/health`);
+    const h = await r.json();
+    if (!h.db) {
+      $('loginStatus').innerHTML = `⚠️ ${esc(h.dbError || 'Database unreachable')} — <a href="/api/health" target="_blank">full diagnostics</a>`;
+      $('loginStatus').style.display = 'block';
+    } else if (h.tables.users === 'MISSING' || h.userCount === 0) {
+      $('loginStatus').textContent = 'Note: no users yet — admin/admin will be created automatically on your first login attempt.';
+      $('loginStatus').style.display = 'block';
+    }
+  } catch (e) { /* server down entirely — the login attempt will report it */ }
+}
+
 async function doLogin() {
   const u = $('loginUser').value.trim(), p = $('loginPass').value;
-  const err = $('loginError');
-  err.textContent = 'Invalid credentials. Try again.';
+  const err = $('loginError'), btn = $('loginBtn');
   err.style.display = 'none';
-  if (!u || !p) { err.style.display = 'block'; return; }
+  if (!u || !p) { err.textContent = 'Enter both username and password.'; err.style.display = 'block'; return; }
+
+  btn.disabled = true; btn.textContent = 'Connecting…';
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), 60000); // Render free-tier cold start can take ~50s
+
   try {
-    const r = await fetch(`${API_BASE}/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p }) });
-    const data = await r.json();
-    if (data.success) { localStorage.setItem('zs_auth', 'true'); location.reload(); }
-    else err.style.display = 'block';
-  } catch (e) {
-    err.textContent = 'Server unreachable — is the backend running?';
+    const r = await fetch(`${API_BASE}/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: u, password: p }),
+      signal: ctrl.signal
+    });
+    clearTimeout(to);
+    const data = await r.json().catch(() => ({}));
+
+    if (r.ok && data.success) {
+      localStorage.setItem('zs_auth', 'true');
+      location.reload();
+      return;
+    }
+    if (data.error === 'db_down') {
+      err.innerHTML = `Database problem: ${esc(data.message)}<br><a href="/api/health" target="_blank">Run /api/health for details</a>`;
+    } else if (data.error === 'bad_request') {
+      err.textContent = data.message;
+    } else {
+      err.textContent = data.message || 'Invalid username or password. Default is admin/admin.';
+    }
     err.style.display = 'block';
+  } catch (e) {
+    clearTimeout(to);
+    if (e.name === 'AbortError') {
+      err.textContent = 'The server took too long to respond. If you are on Render’s free tier, the service may be waking up — wait a minute and try again.';
+    } else {
+      err.textContent = 'Cannot reach the server — check Render logs / is the service deployed and running?';
+    }
+    err.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Enter the Abyss';
   }
 }
+
 function doLogout() { localStorage.removeItem('zs_auth'); location.reload(); }
  $('loginUser').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
  $('loginPass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
@@ -393,7 +447,7 @@ const Cache = {
     const d = this.get(k);
     if (!d.find(x => x.id === item.id && x.season === item.season && x.episode === item.episode)) {
       d.unshift(item);
-      if (k === 'hist' && d.length > 60) d.length = 60; // cap history
+      if (k === 'hist' && d.length > 60) d.length = 60;
       this.set(k, d);
     }
     this.updateCounts();
@@ -425,9 +479,9 @@ function switchView(v) {
 
   if (v === 'home') {
     $('catbar').style.display = 'flex';
-    if (allMovies.length > 0) initHero(allMovies);
     renderSections(allMovies);
-    if (allMovies.length === 0) showEmpty('Database Empty', 'Start a TMDB sync from the panel in the bottom-right corner.');
+    if (allMovies.length > 0) initHero(allMovies);
+    else showEmpty('Database Empty', 'Start a TMDB sync from the panel in the bottom-right corner, or check /api/health.');
   } else if (v === 'favorites') {
     const f = Cache.get('fav');
     if (f.length === 0) showEmpty('Favorites Empty', 'Tap the heart on any card to save it here.');
@@ -444,7 +498,7 @@ function switchView(v) {
 }
 function showEmpty(t, d) { $('emptyTitle').textContent = t; $('emptyDesc').textContent = d; $('empty').style.display = 'flex'; }
 
-/* ─────────── Live search (entire DB, debounced, stale-guarded) ─────────── */
+/* ─────────── Live search ─────────── */
 let searchTimer = null, searchToken = 0;
 function handleSearch() {
   clearTimeout(searchTimer);
@@ -526,7 +580,11 @@ function initHero(items) {
   changeHero(0);
   startHeroAuto();
 }
-function changeHero(index) { heroIndex = index; renderHero(heroItems[index]); document.querySelectorAll('.hero-dot').forEach((d, i) => d.classList.toggle('active', i === index)); }
+function changeHero(index) {
+  heroIndex = index;
+  renderHero(heroItems[index]);
+  document.querySelectorAll('.hero-dot').forEach((d, i) => d.classList.toggle('active', i === index));
+}
 function nextHero() { changeHero((heroIndex + 1) % heroItems.length); }
 function prevHero() { changeHero((heroIndex - 1 + heroItems.length) % heroItems.length); }
 function startHeroAuto() { clearInterval(heroInterval); heroInterval = setInterval(nextHero, 8000); }
@@ -618,7 +676,7 @@ async function openPlayer(id, season = 1, episode = 1) {
   try {
     const r = await fetch(`${API_BASE}/movie/${id}`);
     if (r.ok) currentMovie = await r.json();
-  } catch (e) {}
+  } catch (e) { /* keep local copy */ }
 
   renderPlayerInfo();
   await loadSources();
@@ -661,12 +719,12 @@ async function loadSources() {
     return;
   }
 
-  // Bind by data-name + listeners → no quote/escaping bugs (this was the PrimeSrc breakage)
+  // Bind via data-name + addEventListener → no inline-escaping bugs (the old PrimeSrc killer)
   node.innerHTML = dynamicSources.map(s => `<div class="server-btn" data-name="${esc(s.name)}">${esc(s.name)}</div>`).join('');
   const btns = node.querySelectorAll('.server-btn');
   btns.forEach(btn => btn.addEventListener('click', () => selSrc(btn, btn.dataset.name)));
 
-  // Restore the user's preferred server across episodes, else first server
+  // Restore preferred server across episode changes, else first server
   const idx = Math.max(0, dynamicSources.findIndex(s => s.name === preferredSource));
   if (btns[idx]) selSrc(btns[idx], dynamicSources[idx].name);
 
@@ -711,4 +769,104 @@ function showVideoLoading(msg) {
     if (ph.style.display !== 'none') ph.innerHTML = '<p>Still loading… if nothing plays, try another server below.</p>';
   }, 12000);
 }
-function hideVideoLoading() { clearTimeout(videoLoadTimer); $('vplaceholder').style.display = 'none';
+function hideVideoLoading() {
+  clearTimeout(videoLoadTimer);
+  $('vplaceholder').style.display = 'none';
+}
+function showVideoPlaceholder(msg) {
+  clearTimeout(videoLoadTimer);
+  const ph = $('vplaceholder');
+  ph.style.display = 'flex';
+  ph.innerHTML = `<p>${esc(msg)}</p>`;
+}
+
+function renderSeasons() {
+  const bar = $('seasonsBar');
+  const grid = $('episodesGrid');
+  bar.innerHTML = currentSeasons.map(s =>
+    `<div class="season-pill ${s.season_number === activeSeason ? 'active' : ''}" onclick="selectSeason(${s.season_number})">${esc(s.name)}</div>`
+  ).join('');
+
+  const currentS = currentSeasons.find(s => s.season_number === activeSeason);
+  const epCount = currentS?.episode_count || 0;
+  grid.innerHTML = Array.from({ length: epCount }, (_, i) => i + 1).map(ep =>
+    `<div class="ep-btn ${ep === activeEpisode ? 'active' : ''}" onclick="selectEpisode(${activeSeason}, ${ep})">${ep}</div>`
+  ).join('') || '<p class="src-note">No episode data for this season.</p>';
+}
+
+function selectSeason(s) {
+  activeSeason = s;
+  activeEpisode = 1;
+  renderSeasons();
+  loadSources(); // refresh sources for new season without rebuilding the whole player
+}
+
+function selectEpisode(s, e) {
+  activeSeason = s;
+  activeEpisode = e;
+  renderSeasons();
+  loadSources();
+}
+
+function updatePlayerFavBtn() {
+  const btn = $('playerFavBtn');
+  const isFav = currentMovie && Cache.has('fav', currentMovie.id);
+  btn.classList.toggle('active', !!isFav);
+  btn.innerHTML = `<svg viewBox="0 0 24 24" fill="${isFav ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>`;
+}
+function togglePlayerFav() { if (currentMovie) toggleFav(currentMovie.id); }
+
+function closePlayer() {
+  $('portal').classList.remove('on');
+  document.body.style.overflow = '';
+  const old = $('uvideo');
+  if (old) old.remove();
+  showVideoPlaceholder('Select a server below to start watching.');
+  currentMovie = null;
+  dynamicSources = [];
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && $('portal').classList.contains('on')) closePlayer();
+});
+
+/* ─────────── Sync engine UI ─────────── */
+async function startSync() {
+  $('syncBtn').disabled = true;
+  $('syncBtn').innerText = 'Starting…';
+  try { await fetch(`${API_BASE}/start-sync`); } catch (e) {}
+  checkSyncStatus();
+}
+let syncInterval = null;
+async function checkSyncStatus() {
+  clearInterval(syncInterval);
+  syncInterval = setInterval(async () => {
+    try {
+      const r = await fetch(`${API_BASE}/sync-status`);
+      const data = await r.json();
+      const btn = $('syncBtn');
+      const txt = $('syncStatusText');
+      if (data.isSyncing) {
+        txt.innerHTML = `Status: Syncing <b>${esc(data.category)}</b><br>Page: ${data.currentPage}<br>Cached Items: ${data.totalItems}`;
+        btn.disabled = true; btn.innerText = 'Syncing…';
+      } else {
+        txt.innerHTML = `Status: Idle / Complete<br>Cached Items: ${data.totalItems}`;
+        btn.disabled = false; btn.innerText = 'Start Caching TMDB';
+      }
+    } catch (e) {}
+  }, 2000);
+}
+
+/* ─────────── Init ─────────── */
+async function init() {
+  $('sections').innerHTML = `<div class="sec-head"><h2 class="sec-title">Loading Database…</h2></div><div class="grid">${skel(10)}</div>`;
+  const [movies, cats] = await Promise.all([fetchMovies(), fetchCats()]);
+  allMovies = Array.isArray(movies) ? movies : [];
+  allCats = Array.isArray(cats) ? cats : [{ id: 'all', name: 'All' }];
+  renderCats(allCats);
+  switchView('home');
+}
+
+checkAuth();
+</script>
+</body>
+</html>
