@@ -295,28 +295,29 @@ app.get('/api/sources', async (req, res) => {
     new Promise(resolve => setTimeout(resolve, 6000))
   ]);
 
-  // Add Static Meta-Aggregators from sources.json (Including PrimeSrc)
+   // Add Static Meta-Aggregators from sources.json (Including PrimeSrc)
   sourcesConfig.forEach(src => {
-    let url = `${src.base_url}${movieId}`;
+    let url = '';
     
     // Handle PrimeSrc Query Parameter Format
     if (src.format === 'query') {
-      if (isTV) {
-        url = `https://primesrc.me/embed/tv?tmdb=${movieId}&season=1&episode=1`;
-      } else {
-        url = `https://primesrc.me/embed/movie?tmdb=${movieId}`;
-      }
+      url = isTV ? `https://primesrc.me/embed/tv?tmdb=${movieId}&season=1&episode=1` : `https://primesrc.me/embed/movie?tmdb=${movieId}`;
     } 
-    // Handle Standard TV Formats
-    else if (isTV) {
-      if (src.name === 'VidSrc') url = `https://vidsrc.to/embed/tv/${movieId}/1/1`;
-      else if (src.name === 'VidSrc.xyz') url = `https://vidsrc.xyz/embed/tv/${movieId}/1/1`;
-      else if (src.name === '2Embed.cc') url = `https://www.2embed.cc/embedtv/${movieId}&s=1&e=1`;
-      else if (src.name === '2Embed.to') url = `https://www.2embed.to/embedtv/${movieId}&s=1&e=1`;
-      else if (src.name === 'MultiEmbed') url = `https://multiembed.mov/?video_id=${movieId}&tmdb=1&s=1&e=1`;
-      else if (src.name === 'SuperEmbed') url = `https://se.bingetime.eu.org/embedtv/${movieId}/1/1`;
-      else if (src.name === 'Embed.su') url = `https://embed.su/embed/tv/${movieId}/1/1`;
-      else if (src.name === 'AutoEmbed') url = `https://autoembed.cc/embed/tv/${movieId}/1/1`;
+    // Handle MultiEmbed
+    else if (src.name === 'MultiEmbed') {
+      url = isTV ? `https://multiembed.mov/?video_id=${movieId}&tmdb=1&s=1&e=1` : `https://multiembed.mov/?video_id=${movieId}&tmdb=1`;
+    } 
+    // Handle SmashyStream
+    else if (src.name === 'SmashyStream') {
+      url = `https://embed.smashystream.com/playere.php?tmdb=${movieId}`;
+    } 
+    // Handle 2Embed (Requires slightly different TV format)
+    else if (src.name.includes('2Embed')) {
+      url = isTV ? `${src.base_url}tv/${movieId}&s=1&e=1` : `${src.base_url}${movieId}`;
+    } 
+    // Handle all others (VidSrc, SuperEmbed, Embed.su, AutoEmbed)
+    else {
+      url = isTV ? `${src.base_url}tv/${movieId}/1/1` : `${src.base_url}movie/${movieId}`;
     }
     
     rawSources.push({ name: src.name, url: url, status: "online" });
