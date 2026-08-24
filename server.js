@@ -64,10 +64,13 @@ app.get('/api/sync-status', (req, res) => res.json(syncState));
 
 async function runSync() {
   const categories = [
-    { name: 'movies', url: `${TMDB_BASE}/discover/movie?api_key=${TMDB_KEY}&sort_by=popularity.desc&page=` },
-    { name: 'series', url: `${TMDB_BASE}/discover/tv?api_key=${TMDB_KEY}&sort_by=popularity.desc&page=` },
-    { name: 'anime', url: `${TMDB_BASE}/discover/tv?api_key=${TMDB_KEY}&with_genres=16&with_original_language=ja&sort_by=popularity.desc&page=` }
+    { name: 'movies', url: `${TMDB_BASE}/discover/movie?api_key=${TMDB_KEY}&sort_by=primary_release_date.desc&page=` },
+    { name: 'series', url: `${TMDB_BASE}/discover/tv?api_key=${TMDB_KEY}&sort_by=first_air_date.desc&page=` },
+    { name: 'anime', url: `${TMDB_BASE}/discover/tv?api_key=${TMDB_KEY}&with_genres=16&with_original_language=ja&sort_by=first_air_date.desc&page=` }
   ];
+
+  for (const cat of categories) {
+    // ... rest of your runSync code remains exactly the same
 
   for (const cat of categories) {
     if (!syncState.isSyncing) break;
