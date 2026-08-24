@@ -119,7 +119,7 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
 .catpill:hover { background: rgba(229,9,20,0.15); color: var(--text); transform: translateY(-1px); }
 .catpill.active { background: linear-gradient(135deg, rgba(229,9,20,0.25), rgba(255,26,26,0.15)); border-color: var(--lava); color: #fff; }
 
-/* ── Sections — 10×2 grid (20 items max per category on home) ── */
+/* ── Sections — 10×2 grid, max 20 items per category ── */
 .sec-head { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 28px; width: 100%; padding: 0 40px; }
 .sec-title { font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: 700; letter-spacing: 2.5px; text-transform: uppercase; display: flex; align-items: center; gap: 12px; }
 .sec-title::before { content: ''; width: 5px; height: 24px; background: var(--lava); border-radius: 3px; box-shadow: 0 0 16px var(--lava); }
@@ -131,7 +131,7 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
 @media (max-width: 560px)  { .grid { grid-template-columns: repeat(3, 1fr); gap: 18px 10px; } }
 @media (max-width: 400px)  { .grid { grid-template-columns: repeat(2, 1fr); } }
 
-/* ── Cards (compacted for the denser 10-column grid) ── */
+/* ── Cards ── */
 .card { position: relative; border-radius: 16px; overflow: hidden; cursor: pointer; transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1); border: 1px solid var(--border); background: rgba(10, 0, 0, 0.5); }
 .card:hover { transform: translateY(-10px) scale(1.02); border-color: var(--lava); box-shadow: 0 28px 56px rgba(0,0,0,0.8), 0 0 0 1px rgba(229,9,20,0.2), 0 0 80px rgba(229,9,20,0.15); }
 .card-media { position: relative; overflow: hidden; }
@@ -184,8 +184,6 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
 .vplaceholder p { font-size: 14px; max-width: 420px; }
 .spinner { width: 42px; height: 42px; border: 3px solid rgba(229,9,20,0.2); border-top-color: var(--lava); border-radius: 50%; animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.direct-btn { position: absolute; top: 10px; right: 10px; z-index: 10; background: rgba(229,9,20,0.85); color: white; border: none; padding: 6px 12px; border-radius: 6px; font-size: 11px; cursor: pointer; font-weight: 600; display: none; }
-.direct-btn:hover { background: var(--flame); }
 
 .sub-head { font-family: 'Orbitron', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; display: flex; align-items: center; gap: 10px; color: var(--fog); }
 .sub-head::before { content: ''; width: 4px; height: 18px; background: var(--lava); border-radius: 2px; box-shadow: 0 0 12px var(--lava); }
@@ -261,7 +259,7 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
     <input type="password" id="loginPass" class="login-input" placeholder="Password" autocomplete="current-password">
     <button class="login-btn" id="loginBtn" onclick="doLogin()">Enter the Abyss</button>
     <div id="loginError" class="login-error">Invalid credentials. Try again.</div>
-    <p class="login-hint">First run? Default login is <b>admin / admin</b><br>(or the ADMIN_USER / ADMIN_PASS env vars).</p>
+    <p class="login-hint">First run? Default login is <b>admin / admin</b></p>
   </div>
 </div>
 
@@ -446,7 +444,7 @@ function doLogout() { localStorage.removeItem('zs_auth'); location.reload(); }
  $('loginUser').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
  $('loginPass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
 
-/* ─────────── Local cache (favorites / history) ─────────── */
+/* ─────────── Local cache ─────────── */
 const Cache = {
   get(k) { try { return JSON.parse(localStorage.getItem('hs_' + k)) || []; } catch { return []; } },
   set(k, v) { localStorage.setItem('hs_' + k, JSON.stringify(v)); },
@@ -470,7 +468,6 @@ let view = 'home', cat = 'all', allMovies = [], allCats = [];
 let currentMovie = null, dynamicSources = [], currentSeasons = [];
 let activeSeason = 1, activeEpisode = 1, preferredSource = null;
 let heroItems = [], heroIndex = 0, heroInterval = null;
-let directBtnTimer = null;
 
 /* ─────────── Views ─────────── */
 function switchView(v) {
@@ -489,7 +486,7 @@ function switchView(v) {
     $('catbar').style.display = 'flex';
     renderSections(allMovies);
     if (allMovies.length > 0) initHero(allMovies);
-    else showEmpty('Database Empty', 'Start a TMDB sync from the panel in the bottom-right corner, or check /api/health.');
+    else showEmpty('Database Empty', 'Start a TMDB sync from the panel in the bottom-right corner.');
   } else if (v === 'favorites') {
     const f = Cache.get('fav');
     if (f.length === 0) showEmpty('Favorites Empty', 'Tap the heart on any card to save it here.');
@@ -525,7 +522,7 @@ async function doSearch(q) {
     if (token !== searchToken) return;
     const res = await r.json();
     if (!Array.isArray(res) || res.length === 0) {
-      dd.innerHTML = '<div class="search-item"><div class="search-item-info"><div class="search-item-title">No results found</div><div class="search-item-meta">Try a different title.</div></div></div>';
+      dd.innerHTML = '<div class="search-item"><div class="search-item-info"><div class="search-item-title">No results found</div></div></div>';
       return;
     }
     dd.innerHTML = res.map(m => {
@@ -534,7 +531,7 @@ async function doSearch(q) {
         <img src="${esc(m.poster) || PLACEHOLDER}" alt="" onerror="imgFallback(this)">
         <div class="search-item-info">
           <div class="search-item-title">${esc(m.title)}</div>
-          <div class="search-item-meta"><span class="type-tag">${label}</span>${esc(m.release_date || '')} &nbsp;•&nbsp; ⭐ ${fmtRating(m.rating)}</div>
+          <div class="search-item-meta"><span class="type-tag">${label}</span>${esc(m.release_date || '')} • ⭐ ${fmtRating(m.rating)}</div>
         </div>
       </div>`;
     }).join('');
@@ -607,7 +604,7 @@ function renderHero(m) {
   $('hero').classList.add('visible');
 }
 
-/* ─────────── Rendering — 10×2 grid, max 20 items per category ─────────── */
+/* ─────────── Rendering — 10×2 grid, max 20 items ─────────── */
 function renderCats(cats) {
   const bar = $('catbar');
   bar.innerHTML = cats.map(c => `<div class="catpill ${c.id === 'all' ? 'active' : ''}" data-cat="${esc(c.id)}">${esc(c.name)}</div>`).join('');
@@ -737,6 +734,11 @@ async function loadSources() {
   if (currentMovie) Cache.add('hist', { ...currentMovie, season: activeSeason, episode: activeEpisode });
 }
 
+/* ═══════════════════════════════════════════════════════════
+   THE ONLY THING THAT MATTERS — THE SIMPLEST POSSIBLE IFRAME
+   No sandbox, no referrerpolicy, no allow, nothing extra.
+   Just src, style, and allowfullscreen. This cannot break anything.
+   ═══════════════════════════════════════════════════════════ */
 function selSrc(btn, name) {
   if (!btn) return;
   document.querySelectorAll('.server-btn').forEach(b => b.classList.remove('active'));
@@ -750,51 +752,18 @@ function selSrc(btn, name) {
   }
 
   const vframe = $('vframe');
-
-  // Clean up previous iframe + direct button
   const old = $('uvideo');
   if (old) old.remove();
-  const oldBtn = $('directBtn');
-  if (oldBtn) oldBtn.remove();
-  clearTimeout(directBtnTimer);
 
-  /* ══ MAXIMUM-COMPATIBILITY IFRAME ══
-     - NO sandbox attribute (nothing is restricted)
-     - No referrerpolicy restriction (server proxy makes it same-origin anyway)
-     - Broad allow list so every feature is available to the embed
-     - The src is routed through /api/embed?url=... on our own server,
-       making the embed SAME-ORIGIN → zero cross-origin restrictions,
-       which is what makes in-player server switching work. */
+  // ── BARE IFRAME — nothing can go wrong with this ──
   const iframe = document.createElement('iframe');
   iframe.id = 'uvideo';
-  iframe.setAttribute('allow', 'autoplay; fullscreen; encrypted-media; picture-in-picture; accelerometer; gyroscope; clipboard-write; midi; screen-wake-lock; xr-spatial-tracking; gamepad; speaker-selection; display-capture');
-  iframe.setAttribute('allowfullscreen', 'true');
-  iframe.setAttribute('frameborder', '0');
-  iframe.setAttribute('scrolling', 'no');
-  iframe.style.cssText = 'width:100%;height:100%;border:none;display:block;background:#000;';
-  iframe.addEventListener('load', hideVideoLoading);
+  iframe.src = source.url;
+  iframe.style.cssText = 'width:100%;height:100%;border:0;display:block;';
+  iframe.allowFullscreen = true;
 
   showVideoLoading(`Connecting to ${name}…`);
   vframe.appendChild(iframe);
-
-  // The URL from the server is already the proxied /api/embed?url=... form
-  setTimeout(() => { iframe.src = source.url; }, 50);
-
-  // Fallback: "Open Direct" button appears after 6s if nothing has loaded
-  const directBtn = document.createElement('button');
-  directBtn.id = 'directBtn';
-  directBtn.className = 'direct-btn';
-  directBtn.textContent = '↗ Open Direct';
-  directBtn.onclick = () => {
-    if (source.directUrl) window.open(source.directUrl, '_blank', 'noopener');
-  };
-  vframe.appendChild(directBtn);
-
-  directBtnTimer = setTimeout(() => {
-    if ($('vplaceholder').style.display !== 'none') {
-      directBtn.style.display = 'block';
-    }
-  }, 6000);
 }
 
 let videoLoadTimer = null;
@@ -805,7 +774,7 @@ function showVideoLoading(msg) {
   clearTimeout(videoLoadTimer);
   videoLoadTimer = setTimeout(() => {
     if (ph.style.display !== 'none') {
-      ph.innerHTML = '<p>Still loading… if nothing plays, this server may be down — try another server below or use “Open Direct”.</p>';
+      ph.innerHTML = '<p>Still loading… try another server below.</p>';
     }
   }, 12000);
 }
@@ -861,9 +830,6 @@ function closePlayer() {
   document.body.style.overflow = '';
   const old = $('uvideo');
   if (old) old.remove();
-  const oldBtn = $('directBtn');
-  if (oldBtn) oldBtn.remove();
-  clearTimeout(directBtnTimer);
   showVideoPlaceholder('Select a server below to start watching.');
   currentMovie = null;
   dynamicSources = [];
