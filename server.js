@@ -63,6 +63,7 @@ app.get('/api/start-sync', async (req, res) => {
 app.get('/api/sync-status', (req, res) => res.json(syncState));
 
 async function runSync() {
+  // Changed sort_by to fetch from NEWEST to OLDEST
   const categories = [
     { name: 'movies', url: `${TMDB_BASE}/discover/movie?api_key=${TMDB_KEY}&sort_by=primary_release_date.desc&page=` },
     { name: 'series', url: `${TMDB_BASE}/discover/tv?api_key=${TMDB_KEY}&sort_by=first_air_date.desc&page=` },
@@ -292,29 +293,57 @@ app.get('/api/sources', async (req, res) => {
     new Promise(resolve => setTimeout(resolve, 6000))
   ]);
 
-  // Add Static Meta-Aggregators from sources.json (Including PrimeSrc)
+  // Add Static Meta-Aggregators from sources.json
   sourcesConfig.forEach(src => {
     let url = '';
-    
-    // Handle PrimeSrc Query Parameter Format
-    if (src.format === 'query') {
-      url = isTV ? `https://primesrc.me/embed/tv?tmdb=${movieId}&season=1&episode=1` : `https://primesrc.me/embed/movie?tmdb=${movieId}`;
+    // Use IMDb ID if we have it, otherwise fallback to TMDB ID
+    const idToUse = imdbId || movieId;
+
+    if (src.name === 'PrimeSrc') {
+      // PrimeSrc explicitly supports TMDB IDs
+      if (isTV) url = `https://primesrc.me/embed/tv?tmdb=${movieId}&season=1&episode=1`;
+      else url = `https://primesrc.me/embed/movie?tmdb=${movieId}`;
     } 
-    // Handle MultiEmbed
-    else if (src.name === 'MultiEmbed') {
-      url = isTV ? `https://multiembed.mov/?video_id=${movieId}&tmdb=1&s=1&e=1` : `https://multiembed.mov/?video_id=${movieId}&tmdb=1`;
-    } 
-    // Handle SmashyStream
     else if (src.name === 'SmashyStream') {
+      // SmashyStream explicitly supports TMDB IDs
       url = `https://embed.smashystream.com/playere.php?tmdb=${movieId}`;
-    } 
-    // Handle 2Embed (Requires slightly different TV format)
-    else if (src.name.includes('2Embed')) {
-      url = isTV ? `${src.base_url}tv/${movieId}&s=1&e=1` : `${src.base_url}${movieId}`;
-    } 
-    // Handle all others (VidSrc, SuperEmbed, Embed.su, AutoEmbed)
+    }
+    else if (src.name === 'SuperEmbed') {
+      // SuperEmbed uses TMDB for movies
+      if (isTV) url = `https://se.bingetime.eu.org/embedtv/${movieId}/1/1`;
+      else url = `https://se.bingetime.eu.org/embedmovie/${movieId}`;
+    }
+    else if (src.name === 'VidSrc') {
+      if (isTV) url = `https://vidsrc.to/embed/tv/${idToUse}/1/1`;
+      else url = `https://vidsrc.to/embed/movie/${idToUse}`;
+    }
+    else if (src.name === 'VidSrc.xyz') {
+      if (isTV) url = `https://vidsrc.xyz/embed/tv/${idToUse}/1/1`;
+      else url = `https://vidsrc.xyz/embed/movie/${idToUse}`;
+    }
+    else if (src.name === '2Embed.cc') {
+      if (isTV) url = `https://www.2embed.cc/embedtv/${idToUse}&s=1&e=1`;
+      else url = `https://www.2embed.cc/embed/${idToUse}`;
+    }
+    else if (src.name === '2Embed.to') {
+      if (isTV) url = `https://www.2embed.to/embedtvfull/${idToUse}&s=1&e=1`;
+      else url = `https://www.2embed.to/embed/${idToUse}`;
+    }
+    else if (src.name === 'MultiEmbed') {
+      if (isTV) url = `https://multiembed.mov/?video_id=${idToUse}&s=1&e=1`;
+      else url = `https://multiembed.mov/?video_id=${idToUse}`;
+    }
+    else if (src.name === 'Embed.su') {
+      if (isTV) url = `https://embed.su/embed/tv/${idToUse}/1/1`;
+      else url = `https://embed.su/embed/movie/${idToUse}`;
+    }
+    else if (src.name === 'AutoEmbed') {
+      if (isTV) url = `https://autoembed.cc/embed/tv/${idToUse}/1/1`;
+      else url = `https://autoembed.cc/embed/movie/${idToUse}`;
+    }
     else {
-      url = isTV ? `${src.base_url}tv/${movieId}/1/1` : `${src.base_url}movie/${movieId}`;
+      // Fallback
+      url = `${src.base_url}${idToUse}`;
     }
     
     rawSources.push({ name: src.name, url: url, status: "online" });
