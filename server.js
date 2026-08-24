@@ -187,4 +187,151 @@ async function runSync() {
   }
 }
 
-/* ───────────────────────── Catalog (≤ 2 years old,
+/* ───────────────────────── Catalog (≤ 2 years old, released, with poster) ───────────────────────── */
+app.get('/api/movies', async (req, res) => {
+  try {
+    const year = new Date().getFullYear();
+    const minDate = `${year - 2}-01-01`;
+    const today = new Date().toISOString().slice(0, 10);
+    const query = `
+      SELECT 'films' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview
+      FROM movies_cache WHERE release_date >= ? AND release_date <= ? AND poster IS NOT NULL AND poster <> ''
+      UNION ALL
+      SELECT 'series' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview
+      FROM series_cache WHERE release_date >= ? AND release_date <= ? AND poster IS NOT NULL AND poster <> ''
+      UNION ALL
+      SELECT 'anime' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview
+      FROM anime_cache WHERE release_date >= ? AND release_date <= ? AND poster IS NOT NULL AND poster <> ''
+      ORDER BY rating DESC
+      LIMIT 500`;
+    const [rows] = await pool.query(query, [minDate, today, minDate, today, minDate, today]);
+    res.json(rows);
+  } catch (err) {
+    console.error('movies:', err.message);
+    res.status(500).json([]);
+  }
+});
+
+/* ───────────────────────── Single item ───────────────────────── */
+app.get('/api/movie/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Bad id' });
+    const query = `
+      SELECT 'films' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM movies_cache WHERE tmdb_id = ?
+      UNION ALL
+      SELECT 'series' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM series_cache WHERE tmdb_id = ?
+      UNION ALL
+      SELECT 'anime' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM anime_cache WHERE tmdb_id = ?
+      LIMIT 1`;
+    const [rows] = await pool.query(query, [id, id, id]);
+    if (rows.length) res.json(rows[0]);
+    else res.status(404).json({ error: 'Not cached yet' });
+  } catch (err) {
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+/* ───────────────────────── Search (entire DB, case-insensitive, injection-safe) ───────────────────────── */
+app.get('/api/search', async (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (q.length < 2) return res.json([]);
+  try {
+    const query = `
+      SELECT 'films' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview
+      FROM movies_cache WHERE INSTR(LOWER(title), LOWER(?)) > 0
+      UNION ALL
+      SELECT 'series' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview
+      FROM series_cache WHERE INSTR(LOWER(title), LOWER(?)) > 0
+      UNION ALL
+      SELECT 'anime' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview
+      FROM anime_cache WHERE INSTR(LOWER(title), LOWER(?)) > 0
+      ORDER BY rating DESC
+      LIMIT 24`;
+    const [rows] = await pool.query(query, [q, q, q]);
+    res.json(rows);
+  } catch (err) {
+    console.error('search:', err.message);
+    res.json([]);
+  }
+});
+
+/* ───────────────────────── Categories (genres in DB) ───────────────────────── */
+app.get('/api/categories', async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT genre AS id, genre AS name FROM (
+        SELECT genre FROM movies_cache
+        UNION SELECT genre FROM series_cache
+        UNION SELECT genre FROM anime_cache
+      ) g
+      WHERE genre IS NOT NULL AND genre <> '' AND genre <> 'Unknown'
+      ORDER BY name`);
+    res.json([{ id: 'all', name: 'All' }, ...rows]);
+  } catch (err) {
+    res.json([{ id: 'all', name: 'All' }]);
+  }
+});
+
+/* ───────────────────────── Sources (with type detection + fallback) ───────────────────────── */
+async function getItemType(id) {
+  const [films] = await pool.query('SELECT tmdb_id FROM movies_cache WHERE tmdb_id = ? LIMIT 1', [id]);
+  if (films.length) return 'films';
+  const [series] = await pool.query('SELECT tmdb_id FROM series_cache WHERE tmdb_id = ? LIMIT 1', [id]);
+  if (series.length) return 'series';
+  const [anime] = await pool.query('SELECT tmdb_id FROM anime_cache WHERE tmdb_id = ? LIMIT 1', [id]);
+  if (anime.length) return 'anime';
+  return null;
+}
+
+app.get('/api/sources', async (req, res) => {
+  try {
+    const id = parseInt(req.query.id);
+    const season = Math.max(1, parseInt(req.query.s) || 1);
+    const episode = Math.max(1, parseInt(req.query.e) || 1);
+    if (!id) return res.json([]);
+
+    let type = (req.query.type || '').toLowerCase();
+    if (!['films', 'movies', 'series', 'anime'].includes(type)) {
+      type = (await getItemType(id)) || 'films';
+    }
+
+    const isTV = type === 'series' || type === 'anime';
+    const list = isTV ? getEnabledSeriesSources() : getEnabledMovieSources();
+
+    const sources = list.map(s => ({
+      name: s.name,
+      url: isTV ? buildSeriesUrl(s.id, id, season, episode) : buildMovieUrl(s.id, id)
+    })).filter(s => s.url && /^https?:\/\//.test(s.url));
+
+    res.json(sources);
+  } catch (err) {
+    console.error('sources:', err.message);
+    res.json([]);
+  }
+});
+
+/* ───────────────────────── Seasons (TMDB, 1h in-memory cache) ───────────────────────── */
+const seasonsCache = new Map();
+app.get('/api/seasons/:id', async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (!id) return res.json([]);
+  const cached = seasonsCache.get(id);
+  if (cached && Date.now() - cached.t < 3600000) return res.json(cached.data);
+  try {
+    const r = await axios.get(`${TMDB_BASE}/tv/${id}?api_key=${TMDB_KEY}`, { timeout: 12000 });
+    const seasons = (r.data.seasons || [])
+      .filter(s => s.season_number > 0 && s.episode_count > 0)
+      .map(s => ({ name: s.name, season_number: s.season_number, episode_count: s.episode_count }));
+    seasonsCache.set(id, { t: Date.now(), data: seasons });
+    res.json(seasons);
+  } catch (err) {
+    res.json([]);
+  }
+});
+
+/* ───────────────────────── Root & boot ───────────────────────── */
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`🔥 Z-Stream running on http://localhost:${PORT}`));
