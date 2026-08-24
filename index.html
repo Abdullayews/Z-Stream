@@ -365,7 +365,7 @@ function imgFallback(img) { img.onerror = null; img.src = PLACEHOLDER; }
 function checkAuth() {
   if (localStorage.getItem('zs_auth') !== 'true') {
     $('loginPortal').style.display = 'flex';
-    probeHealth(); // surface DB problems before the user even types
+    probeHealth();
   } else {
     $('loginPortal').style.display = 'none';
     init();
@@ -381,11 +381,11 @@ async function probeHealth() {
     if (!h.db) {
       $('loginStatus').innerHTML = `⚠️ ${esc(h.dbError || 'Database unreachable')} — <a href="/api/health" target="_blank">full diagnostics</a>`;
       $('loginStatus').style.display = 'block';
-    } else if (h.tables.users === 'MISSING' || h.userCount === 0) {
-      $('loginStatus').textContent = 'Note: no users yet — admin/admin will be created automatically on your first login attempt.';
+    } else if (h.tables && h.tables.users === 'MISSING') {
+      $('loginStatus').textContent = 'Note: no users table yet — admin/admin will be created on first login attempt.';
       $('loginStatus').style.display = 'block';
     }
-  } catch (e) { /* server down entirely — the login attempt will report it */ }
+  } catch (e) { /* server down — login attempt will report it */ }
 }
 
 async function doLogin() {
@@ -415,6 +415,8 @@ async function doLogin() {
     }
     if (data.error === 'db_down') {
       err.innerHTML = `Database problem: ${esc(data.message)}<br><a href="/api/health" target="_blank">Run /api/health for details</a>`;
+    } else if (data.error === 'rate_limited') {
+      err.textContent = data.message || 'Too many attempts. Wait a few minutes.';
     } else if (data.error === 'bad_request') {
       err.textContent = data.message;
     } else {
@@ -424,7 +426,7 @@ async function doLogin() {
   } catch (e) {
     clearTimeout(to);
     if (e.name === 'AbortError') {
-      err.textContent = 'The server took too long to respond. If you are on Render’s free tier, the service may be waking up — wait a minute and try again.';
+      err.textContent = 'The server took too long to respond. If you are on Render\u2019s free tier, the service may be waking up — wait a minute and try again.';
     } else {
       err.textContent = 'Cannot reach the server — check Render logs / is the service deployed and running?';
     }
@@ -719,7 +721,7 @@ async function loadSources() {
     return;
   }
 
-  // Bind via data-name + addEventListener → no inline-escaping bugs (the old PrimeSrc killer)
+  // Bind via data-name + addEventListener → no inline-escaping bugs
   node.innerHTML = dynamicSources.map(s => `<div class="server-btn" data-name="${esc(s.name)}">${esc(s.name)}</div>`).join('');
   const btns = node.querySelectorAll('.server-btn');
   btns.forEach(btn => btn.addEventListener('click', () => selSrc(btn, btn.dataset.name)));
@@ -746,7 +748,21 @@ function selSrc(btn, name) {
 
   const iframe = document.createElement('iframe');
   iframe.id = 'uvideo';
-  iframe.setAttribute('referrerpolicy', 'no-referrer');
+
+  // ── FIX 1: referrerpolicy ──
+  // 'no-referrer' breaks providers that validate the referrer, and the old
+  // setting produced console spam + fallback popup behavior on some sources.
+  // 'strict-origin-when-cross-origin' sends just our origin — accepted by
+  // virtually every embed provider.
+  iframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
+
+  // ── FIX 2: sandbox blocks popup ads (e.g. intellipopup.com) ──
+  // We deliberately do NOT include 'allow-popups' or 'allow-top-navigation',
+  // so the embedded player cannot open popup ads or redirect this page.
+  // If a specific provider refuses to play, test by temporarily removing
+  // the sandbox attribute for that source.
+  iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
+
   iframe.setAttribute('allowfullscreen', 'true');
   iframe.setAttribute('allow', 'fullscreen; autoplay; encrypted-media; picture-in-picture');
   iframe.setAttribute('frameborder', '0');
@@ -756,7 +772,9 @@ function selSrc(btn, name) {
 
   showVideoLoading(`Connecting to ${name}…`);
   vframe.appendChild(iframe);
-  iframe.src = source.url;
+
+  // Small delay so the iframe is attached before navigation starts
+  setTimeout(() => { iframe.src = source.url; }, 50);
 }
 
 let videoLoadTimer = null;
@@ -766,7 +784,9 @@ function showVideoLoading(msg) {
   ph.innerHTML = `<div class="spinner"></div><p>${esc(msg || 'Loading…')}</p>`;
   clearTimeout(videoLoadTimer);
   videoLoadTimer = setTimeout(() => {
-    if (ph.style.display !== 'none') ph.innerHTML = '<p>Still loading… if nothing plays, try another server below.</p>';
+    if (ph.style.display !== 'none') {
+      ph.innerHTML = '<p>Still loading… if nothing plays, this server may be down — try another server below.</p>';
+    }
   }, 12000);
 }
 function hideVideoLoading() {
