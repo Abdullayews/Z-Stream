@@ -1,9 +1,7 @@
 // ─────────────────────────────────────────────────────────────
 // sources.js — Central embed-provider configuration
-// To add / remove / rename a provider, just edit the arrays.
 //   method 'path'  → placeholders {tmdbId} {season} {episode} in baseUrl
 //   method 'query' → placeholders in param VALUES, appended to baseUrl
-// If a provider changes its domain, update baseUrl here only.
 // ─────────────────────────────────────────────────────────────
 
 const movieSources = [
@@ -31,15 +29,12 @@ const seriesSources = [
 function getEnabledMovieSources()  { return movieSources.filter(s => s.enabled); }
 function getEnabledSeriesSources() { return seriesSources.filter(s => s.enabled); }
 
-// ── Movie URL builder (handles BOTH methods — this was the PrimeSrc bug) ──
 function buildMovieUrl(sourceId, tmdbId) {
   const source = movieSources.find(s => s.id === sourceId && s.enabled);
   if (!source || !tmdbId) return '';
-
   if (source.method === 'path') {
     return source.baseUrl.replace(/\{tmdbId\}/g, encodeURIComponent(String(tmdbId)));
   }
-
   if (source.method === 'query') {
     const params = new URLSearchParams();
     Object.entries(source.params || {}).forEach(([key, value]) => {
@@ -47,25 +42,20 @@ function buildMovieUrl(sourceId, tmdbId) {
     });
     return `${source.baseUrl}?${params.toString()}`;
   }
-
   return '';
 }
 
-// ── Series URL builder ──
 function buildSeriesUrl(sourceId, tmdbId, season, episode) {
   const source = seriesSources.find(s => s.id === sourceId && s.enabled);
   if (!source || !tmdbId) return '';
-
   const s = parseInt(season) || 1;
   const e = parseInt(episode) || 1;
-
   if (source.method === 'path') {
     return source.baseUrl
       .replace(/\{tmdbId\}/g, encodeURIComponent(String(tmdbId)))
       .replace(/\{season\}/g, s)
       .replace(/\{episode\}/g, e);
   }
-
   if (source.method === 'query') {
     const params = new URLSearchParams();
     Object.entries(source.params || {}).forEach(([key, value]) => {
@@ -76,7 +66,6 @@ function buildSeriesUrl(sourceId, tmdbId, season, episode) {
     });
     return `${source.baseUrl}?${params.toString()}`;
   }
-
   return '';
 }
 
