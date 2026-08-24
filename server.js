@@ -6,26 +6,24 @@ const rateLimit = require('express-rate-limit');
 const compression = require('compression');
 require('dotenv').config();
 
-const { 
-  getEnabledMovieSources, 
-  buildMovieUrl, 
-  getEnabledSeriesSources, 
-  buildSeriesUrl 
+const {
+  getEnabledMovieSources,
+  buildMovieUrl,
+  getEnabledSeriesSources,
+  buildSeriesUrl
 } = require('./sources');
 
 const app = express();
-app.set('trust proxy', 1);
+app.set('trust proxy', 1); // Required for Render's proxy — without this, rate limiter blocks everyone
 
 app.use(express.json());
 app.use(express.static(__dirname));
-
-// ── Compression ──
 app.use(compression({ level: 5, threshold: 1024 }));
 
-// ── Rate limiting ──
+// Rate limiting only — NO Helmet, NO security headers that break iframes
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 300,
+  limit: 200,
   standardHeaders: 'draft-8',
   legacyHeaders: false,
   message: { success: false, error: 'rate_limited', message: 'Too many requests.' }
@@ -34,32 +32,35 @@ app.use('/api/', generalLimiter);
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 10,
+  limit: 5,
   message: { success: false, error: 'rate_limited', message: 'Too many login attempts.' }
 });
 
-// ── Serve HTML with permissive headers ──
-function serveIndex(req, res) {
-  res.setHeader('Cache-Control', 'no-cache');
-  res.sendFile(path.join(__dirname, 'index.html'));
+// ── Caching ──
+class TTLCache {
+  constructor() { this.cache = new Map(); }
+  get(key) {
+    const entry = this.cache.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.expiry) {
+      this.cache.delete(key);
+      return null;
+    }
+    return entry.value;
+  }
+  set(key, value, ttlMs) {
+    if (this.cache.size > 500) {
+      const oldestKey = this.cache.keys().next().value;
+      this.cache.delete(oldestKey);
+    }
+    this.cache.set(key, { value, expiry: Date.now() + ttlMs });
+  }
+  clear() { this.cache.clear(); }
 }
-app.get('/', serveIndex);
-app.get('/index.html', serveIndex);
 
-// ── ENV VALIDATION ──
-const REQUIRED_ENV = ['TIDB_HOST', 'TIDB_USER', 'TIDB_PASSWORD', 'TIDB_DATABASE'];
-const missingEnv = REQUIRED_ENV.filter(k => !process.env[k]);
-if (missingEnv.length) {
-  console.error('❌ MISSING ENVIRONMENT VARIABLES: ' + missingEnv.join(', '));
-}
-if (!process.env.TMDB_API_KEY) {
-  console.warn('⚠️  TMDB_API_KEY missing — sync & seasons will fail.');
-}
+const apiCache = new TTLCache();
 
-const TMDB_BASE = 'https://api.themoviedb.org/3';
-const TMDB_KEY = process.env.TMDB_API_KEY;
-
-// ── DATABASE ──
+// ── Database ──
 const pool = mysql.createPool({
   host: process.env.TIDB_HOST,
   port: parseInt(process.env.TIDB_PORT) || 4000,
@@ -96,7 +97,7 @@ function classifyDbError(err) {
   return `Database error (${code || 'unknown'})`;
 }
 
-// ── SCHEMA ──
+// ── Schema ──
 let schemaReady = false;
 
 async function ensureSchema() {
@@ -126,17 +127,8 @@ async function ensureSchema() {
   if (c === 0) {
     const au = process.env.ADMIN_USER || 'admin';
     const ap = process.env.ADMIN_PASS || 'admin';
-    try {
-      await pool.query('INSERT INTO users (username, password) VALUES (?, ?)', [au, ap]);
-      console.log(`✓ Default user created: ${au} / ${ap}`);
-    } catch (e) { /* race */ }
-  }
-
-  if (process.env.ADMIN_USER && process.env.ADMIN_PASS) {
-    await pool.query(
-      'INSERT INTO users (username, password) VALUES (?, ?) ON DUPLICATE KEY UPDATE password = VALUES(password)',
-      [process.env.ADMIN_USER, process.env.ADMIN_PASS]
-    );
+    await pool.query('INSERT INTO users (username, password) VALUES (?, ?)', [au, ap]);
+    console.log(`✓ Default user created: ${au} / ${ap}`);
   }
 
   schemaReady = true;
@@ -158,71 +150,7 @@ async function bootDb() {
 }
 bootDb();
 
-// ── EMBED PROXY — same-origin iframe loading ──
-app.get('/api/embed', async (req, res) => {
-  const targetUrl = req.query.url;
-
-  if (!targetUrl) {
-    return res.status(400).send('Missing url parameter');
-  }
-
-  try {
-    const parsed = new URL(targetUrl);
-    if (!['http:', 'https:'].includes(parsed.protocol)) {
-      return res.status(400).send('Invalid protocol');
-    }
-  } catch (e) {
-    return res.status(400).send('Invalid URL');
-  }
-
-  try {
-    const response = await axios.get(targetUrl, {
-      timeout: 15000,
-      maxRedirects: 5,
-      headers: {
-        'User-Agent': req.headers['user-agent'] || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5'
-      },
-      responseType: 'text',
-      validateStatus: () => true // Accept all status codes, don't throw
-    });
-
-    res.set({
-      'Content-Type': 'text/html; charset=utf-8',
-      'Cache-Control': 'no-cache, no-store, must-revalidate'
-    });
-
-    res.send(response.data);
-
-  } catch (err) {
-    console.error('Embed proxy error:', err.message);
-    res.status(502).send(`<!DOCTYPE html><html><head><title>Server Error</title></head><body style="background:#000;color:#E50914;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;"><div style="text-align:center;"><h2>⚠ Server Unavailable</h2><p style="color:#A1A1A1;">Try another server below.</p></div></body></html>`);
-  }
-});
-
-// ── IMDb ID lookup (for providers that need IMDb instead of TMDB) ──
-async function getImdbId(tmdbId) {
-  try {
-    const movieRes = await axios.get(
-      `${TMDB_BASE}/movie/${tmdbId}/external_ids?api_key=${TMDB_KEY}`,
-      { timeout: 10000 }
-    );
-    if (movieRes.data.imdb_id) return movieRes.data.imdb_id;
-  } catch (e) { /* not a movie */ }
-
-  try {
-    const tvRes = await axios.get(
-      `${TMDB_BASE}/tv/${tmdbId}/external_ids?api_key=${TMDB_KEY}`,
-      { timeout: 10000 }
-    );
-    if (tvRes.data.imdb_id) return tvRes.data.imdb_id;
-  } catch (e) { /* not TV */ }
-
-  return null;
-}
-
-// ── HEALTH ──
+// ── Health ──
 app.get('/api/health', async (req, res) => {
   const out = {
     ok: false,
@@ -230,7 +158,7 @@ app.get('/api/health', async (req, res) => {
     dbError: null,
     tables: {},
     userCount: null,
-    tmdbKey: !!TMDB_KEY,
+    tmdbKey: !!process.env.TMDB_API_KEY,
     uptime: Math.floor(process.uptime())
   };
 
@@ -256,7 +184,7 @@ app.get('/api/health', async (req, res) => {
   res.json(out);
 });
 
-// ── AUTH ──
+// ── Auth ──
 app.post('/api/login', loginLimiter, async (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password) {
@@ -289,14 +217,16 @@ app.post('/api/login', loginLimiter, async (req, res) => {
   }
 });
 
-// ── TMDB SYNC ──
+// ── TMDB Sync ──
 let syncState = {
   isSyncing: false,
   currentPage: 0,
   totalItems: 0,
-  category: 'idle',
-  lastSyncAt: null
+  category: 'idle'
 };
+
+const TMDB_BASE = 'https://api.themoviedb.org/3';
+const TMDB_KEY = process.env.TMDB_API_KEY;
 
 async function fetchWithRetry(url, retries = 3) {
   let lastErr;
@@ -314,24 +244,11 @@ app.get('/api/start-sync', async (req, res) => {
 
   try {
     await ensureSchema();
-    syncState = {
-      isSyncing: true,
-      currentPage: 0,
-      totalItems: 0,
-      category: 'movies',
-      lastSyncAt: syncState.lastSyncAt
-    };
+    syncState = { isSyncing: true, currentPage: 0, totalItems: 0, category: 'movies' };
     runSync();
     res.json({ msg: 'Sync started', ...syncState });
   } catch (err) {
-    res.status(503).json({
-      msg: classifyDbError(err),
-      isSyncing: false,
-      currentPage: 0,
-      totalItems: 0,
-      category: 'idle',
-      lastSyncAt: null
-    });
+    res.status(503).json({ msg: classifyDbError(err), isSyncing: false, currentPage: 0, totalItems: 0, category: 'idle' });
   }
 });
 
@@ -341,18 +258,9 @@ async function runSync() {
   const today = new Date().toISOString().slice(0, 10);
 
   const categories = [
-    {
-      name: 'movies',
-      url: `${TMDB_BASE}/discover/movie?api_key=${TMDB_KEY}&sort_by=primary_release_date.desc&include_adult=false&primary_release_date.lte=${today}&page=`
-    },
-    {
-      name: 'series',
-      url: `${TMDB_BASE}/discover/tv?api_key=${TMDB_KEY}&sort_by=first_air_date.desc&include_adult=false&first_air_date.lte=${today}&page=`
-    },
-    {
-      name: 'anime',
-      url: `${TMDB_BASE}/discover/tv?api_key=${TMDB_KEY}&with_genres=16&with_original_language=ja&sort_by=first_air_date.desc&include_adult=false&first_air_date.lte=${today}&page=`
-    }
+    { name: 'movies', url: `${TMDB_BASE}/discover/movie?api_key=${TMDB_KEY}&sort_by=primary_release_date.desc&include_adult=false&primary_release_date.lte=${today}&page=` },
+    { name: 'series', url: `${TMDB_BASE}/discover/tv?api_key=${TMDB_KEY}&sort_by=first_air_date.desc&include_adult=false&first_air_date.lte=${today}&page=` },
+    { name: 'anime', url: `${TMDB_BASE}/discover/tv?api_key=${TMDB_KEY}&with_genres=16&with_original_language=ja&sort_by=first_air_date.desc&include_adult=false&first_air_date.lte=${today}&page=` }
   ];
 
   try {
@@ -373,10 +281,7 @@ async function runSync() {
         }
 
         const items = response.data.results || [];
-        if (!items.length) {
-          hasMore = false;
-          break;
-        }
+        if (!items.length) { hasMore = false; break; }
 
         for (const m of items) {
           const genreId = (m.genre_ids && m.genre_ids[0]) || null;
@@ -396,10 +301,8 @@ async function runSync() {
                 m.overview || ''
               ]
             );
-            if (result.affectedRows === 1) {
-              syncState.totalItems++;
-            }
-          } catch (e) { /* skip bad row */ }
+            if (result.affectedRows === 1) syncState.totalItems++;
+          } catch (e) { /* Skip bad row */ }
         }
 
         syncState.currentPage = page;
@@ -407,8 +310,6 @@ async function runSync() {
         await sleep(page % 20 === 0 ? 10000 : 250);
       }
     }
-
-    syncState.lastSyncAt = new Date().toISOString();
     console.log('✓ TMDB sync complete.');
   } catch (err) {
     console.error('Sync crashed:', err.message);
@@ -417,32 +318,11 @@ async function runSync() {
   }
 }
 
-// ── CACHE ──
-const apiCache = new Map();
-
-function getCache(key) {
-  const entry = apiCache.get(key);
-  if (!entry) return null;
-  if (Date.now() > entry.expiry) {
-    apiCache.delete(key);
-    return null;
-  }
-  return entry.value;
-}
-
-function setCache(key, value, ttlMs) {
-  if (apiCache.size > 500) {
-    const oldestKey = apiCache.keys().next().value;
-    apiCache.delete(oldestKey);
-  }
-  apiCache.set(key, { value, expiry: Date.now() + ttlMs });
-}
-
-// ── CATALOG ──
+// ── Catalog ──
 app.get('/api/movies', async (req, res) => {
   try {
     const cacheKey = 'movies_catalog';
-    const cached = getCache(cacheKey);
+    const cached = apiCache.get(cacheKey);
     if (cached) return res.json(cached);
 
     await ensureSchema();
@@ -465,8 +345,7 @@ app.get('/api/movies', async (req, res) => {
       ORDER BY rating DESC LIMIT 500`;
 
     const [rows] = await pool.query(query, [minDate, today, minDate, today, minDate, today]);
-
-    setCache(cacheKey, rows, 15 * 60 * 1000);
+    apiCache.set(cacheKey, rows, 15 * 60 * 1000);
     res.json(rows);
   } catch (err) {
     console.error('movies:', err.message);
@@ -474,13 +353,14 @@ app.get('/api/movies', async (req, res) => {
   }
 });
 
+// ── Single Item ──
 app.get('/api/movie/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     if (!id) return res.status(400).json({ error: 'Bad id' });
 
     const cacheKey = `movie_${id}`;
-    const cached = getCache(cacheKey);
+    const cached = apiCache.get(cacheKey);
     if (cached) return res.json(cached);
 
     const query = `
@@ -497,7 +377,7 @@ app.get('/api/movie/:id', async (req, res) => {
     const [rows] = await pool.query(query, [id, id, id]);
 
     if (rows.length) {
-      setCache(cacheKey, rows[0], 60 * 60 * 1000);
+      apiCache.set(cacheKey, rows[0], 60 * 60 * 1000);
       res.json(rows[0]);
     } else {
       res.status(404).json({ error: 'Not cached yet' });
@@ -507,13 +387,14 @@ app.get('/api/movie/:id', async (req, res) => {
   }
 });
 
+// ── Search ──
 app.get('/api/search', async (req, res) => {
   const q = (req.query.q || '').trim();
   if (q.length < 2) return res.json([]);
 
   try {
     const cacheKey = `search_${q.toLowerCase()}`;
-    const cached = getCache(cacheKey);
+    const cached = apiCache.get(cacheKey);
     if (cached) return res.json(cached);
 
     await ensureSchema();
@@ -529,7 +410,7 @@ app.get('/api/search', async (req, res) => {
       ORDER BY rating DESC LIMIT 24`;
 
     const [rows] = await pool.query(query, [q, q, q]);
-    setCache(cacheKey, rows, 5 * 60 * 1000);
+    apiCache.set(cacheKey, rows, 5 * 60 * 1000);
     res.json(rows);
   } catch (err) {
     console.error('search:', err.message);
@@ -537,10 +418,11 @@ app.get('/api/search', async (req, res) => {
   }
 });
 
+// ── Categories ──
 app.get('/api/categories', async (req, res) => {
   try {
     const cacheKey = 'categories';
-    const cached = getCache(cacheKey);
+    const cached = apiCache.get(cacheKey);
     if (cached) return res.json(cached);
 
     await ensureSchema();
@@ -554,24 +436,21 @@ app.get('/api/categories', async (req, res) => {
       ORDER BY name`);
 
     const result = [{ id: 'all', name: 'All' }, ...rows];
-    setCache(cacheKey, result, 60 * 60 * 1000);
+    apiCache.set(cacheKey, result, 60 * 60 * 1000);
     res.json(result);
   } catch (err) {
     res.json([{ id: 'all', name: 'All' }]);
   }
 });
 
-// ── SOURCES ──
+// ── Sources ──
 async function getItemType(id) {
   const [films] = await pool.query('SELECT tmdb_id FROM movies_cache WHERE tmdb_id = ? LIMIT 1', [id]);
   if (films.length) return 'films';
-
   const [series] = await pool.query('SELECT tmdb_id FROM series_cache WHERE tmdb_id = ? LIMIT 1', [id]);
   if (series.length) return 'series';
-
   const [anime] = await pool.query('SELECT tmdb_id FROM anime_cache WHERE tmdb_id = ? LIMIT 1', [id]);
   if (anime.length) return 'anime';
-
   return null;
 }
 
@@ -584,7 +463,7 @@ app.get('/api/sources', async (req, res) => {
     if (!id) return res.json([]);
 
     const cacheKey = `sources_${id}_${season}_${episode}`;
-    const cached = getCache(cacheKey);
+    const cached = apiCache.get(cacheKey);
     if (cached) return res.json(cached);
 
     let type = (req.query.type || '').toLowerCase();
@@ -595,32 +474,14 @@ app.get('/api/sources', async (req, res) => {
     const isTV = type === 'series' || type === 'anime';
     const list = isTV ? getEnabledSeriesSources() : getEnabledMovieSources();
 
-    // Get IMDb ID for providers that need it
-    const imdbId = await getImdbId(id);
+    const sources = list.map(s => ({
+      name: s.name,
+      url: isTV
+        ? buildSeriesUrl(s.id, id, season, episode)
+        : buildMovieUrl(s.id, id)
+    })).filter(s => s.url && /^https?:\/\//.test(s.url));
 
-    const sources = [];
-    for (const s of list) {
-      let url;
-
-      if (isTV) {
-        url = buildSeriesUrl(s.id, imdbId || id, season, episode, id);
-      } else {
-        url = buildMovieUrl(s.id, imdbId || id, id);
-      }
-
-      if (!url || !/^https?:\/\//.test(url)) continue;
-
-      // Route through our proxy
-      const proxyUrl = `/api/embed?url=${encodeURIComponent(url)}`;
-
-      sources.push({
-        name: s.name,
-        url: proxyUrl,
-        directUrl: url
-      });
-    }
-
-    setCache(cacheKey, sources, 30 * 60 * 1000);
+    apiCache.set(cacheKey, sources, 30 * 60 * 1000);
     res.json(sources);
   } catch (err) {
     console.error('sources:', err.message);
@@ -628,44 +489,38 @@ app.get('/api/sources', async (req, res) => {
   }
 });
 
-// ── SEASONS ──
+// ── Seasons ──
 app.get('/api/seasons/:id', async (req, res) => {
   const id = parseInt(req.params.id);
   if (!id) return res.json([]);
 
   const cacheKey = `seasons_${id}`;
-  const cached = getCache(cacheKey);
+  const cached = apiCache.get(cacheKey);
   if (cached) return res.json(cached);
 
   try {
-    const r = await axios.get(`${TMDB_BASE}/tv/${id}?api_key=${TMDB_KEY}`, {
-      timeout: 12000
-    });
-
+    const r = await axios.get(`${TMDB_BASE}/tv/${id}?api_key=${TMDB_KEY}`, { timeout: 12000 });
     const seasons = (r.data.seasons || [])
       .filter(s => s.season_number > 0 && s.episode_count > 0)
-      .map(s => ({
-        name: s.name,
-        season_number: s.season_number,
-        episode_count: s.episode_count
-      }));
-
-    setCache(cacheKey, seasons, 60 * 60 * 1000);
+      .map(s => ({ name: s.name, season_number: s.season_number, episode_count: s.episode_count }));
+    apiCache.set(cacheKey, seasons, 60 * 60 * 1000);
     res.json(seasons);
   } catch (err) {
     res.json([]);
   }
 });
 
-// ── CACHE CLEAR ──
+// ── Cache Clear ──
 app.post('/api/clear-cache', (req, res) => {
   apiCache.clear();
-  res.json({ success: true, message: 'All caches cleared' });
+  res.json({ success: true, message: 'Cache cleared' });
 });
+
+// ── Root ──
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🔥 Z-Stream listening on port ${PORT}`);
   console.log(`📊 Health check: http://localhost:${PORT}/api/health`);
-  console.log(`🎥 Embed proxy: http://localhost:${PORT}/api/embed?url=...`);
 });
