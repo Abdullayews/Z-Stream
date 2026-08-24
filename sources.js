@@ -1,13 +1,11 @@
 // ─────────────────────────────────────────────────────────────
-// sources.js — FIXED embed provider URLs
-// PrimeSrc: was vidsrc.xyz (DEAD) → now primesrc.me
-// VidSrc: vidsrc.to may be dead → using vidsrc.cc (confirmed working)
-// SmashyStream: removed "player." prefix causing SSL mismatch
-// MoviesAPI: kept moviesapi.club (redirects to w1.moviesapi.to internally)
+// sources.js — Embed providers with IMDb ID support
+// Some providers need IMDb IDs (vidsrc.cc), others use TMDB IDs (primesrc.me)
+// The server handles the conversion automatically
 // ─────────────────────────────────────────────────────────────
 
 const movieSources = [
-  // PrimeSrc — CORRECTED: was vidsrc.xyz (dead), now primesrc.me
+  // PrimeSrc — accepts TMDB IDs directly
   { 
     id: 'primesrc', 
     name: 'PrimeSrc', 
@@ -16,86 +14,79 @@ const movieSources = [
     baseUrl: 'https://primesrc.me/embed/movie',
     params: { 
       tmdb: '{tmdbId}',
-      fallback: 'true' 
-    }
+      fallback: 'true',
+      serverOrder: 'PrimeVid,Voe,Dood'
+    },
+    idType: 'tmdb'
   },
-  // VidSrc — Using vidsrc.cc (confirmed working via multiple sources)
+  // VidSrc — requires IMDb IDs (vidsrc.cc format)
   { 
     id: 'vidsrc', 
     name: 'VidSrc', 
     enabled: true, 
     method: 'path', 
-    baseUrl: 'https://vidsrc.cc/v2/embed/movie/{tmdbId}'
+    baseUrl: 'https://vidsrc.cc/v2/embed/movie/{imdbId}?poster=true&autoPlay=false',
+    idType: 'imdb'
   },
-  // VidSrc alternate domain (in case vidsrc.cc goes down)
+  // VidSrc alternate domain
   { 
     id: 'vidsrc-alt', 
     name: 'VidSrc Alt', 
     enabled: true, 
     method: 'path', 
-    baseUrl: 'https://vidsrc.me/embed/movie/{tmdbId}'
+    baseUrl: 'https://vidsrc.to/embed/movie/{imdbId}',
+    idType: 'imdb'
   },
-  // VidLink
-  { 
-    id: 'vidlink', 
-    name: 'VidLink', 
-    enabled: true, 
-    method: 'path', 
-    baseUrl: 'https://vidlink.pro/movie/{tmdbId}'
-  },
-  // 2Embed
+  // 2Embed — accepts TMDB IDs
   { 
     id: '2embed', 
     name: '2Embed', 
     enabled: true, 
     method: 'path', 
-    baseUrl: 'https://www.2embed.cc/embed/{tmdbId}'
+    baseUrl: 'https://www.2embed.cc/embed/{tmdbId}',
+    idType: 'tmdb'
   },
-  // SmashyStream — FIXED: removed "player." prefix causing SSL_ERROR_BAD_CERT_DOMAIN
+  // VidLink — accepts TMDB IDs
   { 
-    id: 'smashy', 
-    name: 'SmashyStream', 
+    id: 'vidlink', 
+    name: 'VidLink', 
     enabled: true, 
     method: 'path', 
-    baseUrl: 'https://smashy.stream/movie/{tmdbId}'
+    baseUrl: 'https://vidlink.pro/movie/{tmdbId}',
+    idType: 'tmdb'
   },
-  // Embed.su — alternate domain that works
+  // Embed.su — accepts TMDB IDs
   { 
     id: 'embedsu', 
     name: 'Embed.su', 
     enabled: true, 
     method: 'path', 
-    baseUrl: 'https://embed.su/embed/movie/{tmdbId}'
+    baseUrl: 'https://embed.su/embed/movie/{tmdbId}',
+    idType: 'tmdb'
   },
-  // VidFast — kept, confirmed safe (94/100 trust score)
+  // VidFast — accepts TMDB IDs
   { 
     id: 'vidfast', 
     name: 'VidFast', 
     enabled: true, 
     method: 'path', 
-    baseUrl: 'https://vidfast.pro/movie/{tmdbId}'
+    baseUrl: 'https://vidfast.pro/movie/{tmdbId}',
+    idType: 'tmdb'
   },
-  // MoviesAPI — kept, redirects to w1.moviesapi.to internally
-  { 
-    id: 'moviesapi', 
-    name: 'MoviesAPI', 
-    enabled: true, 
-    method: 'path', 
-    baseUrl: 'https://moviesapi.club/movie/{tmdbId}'
-  },
-  // CineSrc — new alternative found during research
+  // CineSrc — accepts TMDB IDs
   { 
     id: 'cinesrc', 
     name: 'CineSrc', 
     enabled: true, 
     method: 'query',
     baseUrl: 'https://cinesrc.st/embed',
-    params: { tmdb: '{tmdbId}' }
+    params: { tmdb: '{tmdbId}' },
+    idType: 'tmdb'
   }
 ];
 
 const seriesSources = [
-  // PrimeSrc — CORRECTED for TV
+  // PrimeSrc — accepts TMDB IDs directly
   { 
     id: 'primesrc', 
     name: 'PrimeSrc', 
@@ -107,15 +98,17 @@ const seriesSources = [
       season: '{season}', 
       episode: '{episode}',
       fallback: 'true'
-    }
+    },
+    idType: 'tmdb'
   },
-  // VidSrc for TV
+  // VidSrc — requires IMDb IDs
   { 
     id: 'vidsrc', 
     name: 'VidSrc', 
     enabled: true, 
     method: 'path', 
-    baseUrl: 'https://vidsrc.cc/v2/embed/tv/{tmdbId}/{season}/{episode}'
+    baseUrl: 'https://vidsrc.cc/v2/embed/tv/{imdbId}/{season}/{episode}?poster=true&autoPlay=false',
+    idType: 'imdb'
   },
   // VidSrc alternate
   { 
@@ -123,57 +116,46 @@ const seriesSources = [
     name: 'VidSrc Alt', 
     enabled: true, 
     method: 'path', 
-    baseUrl: 'https://vidsrc.me/embed/tv/{tmdbId}/{season}/{episode}'
+    baseUrl: 'https://vidsrc.to/embed/tv/{imdbId}/{season}/{episode}',
+    idType: 'imdb'
   },
-  // VidLink for TV
-  { 
-    id: 'vidlink', 
-    name: 'VidLink', 
-    enabled: true, 
-    method: 'path', 
-    baseUrl: 'https://vidlink.pro/tv/{tmdbId}/{season}/{episode}'
-  },
-  // 2Embed for TV
+  // 2Embed — accepts TMDB IDs
   { 
     id: '2embed', 
     name: '2Embed', 
     enabled: true, 
     method: 'path', 
-    baseUrl: 'https://www.2embed.cc/embedtv/{tmdbId}&s={season}&e={episode}'
+    baseUrl: 'https://www.2embed.cc/embedtv/{tmdbId}&s={season}&e={episode}',
+    idType: 'tmdb'
   },
-  // SmashyStream for TV — FIXED domain
+  // VidLink — accepts TMDB IDs
   { 
-    id: 'smashy', 
-    name: 'SmashyStream', 
+    id: 'vidlink', 
+    name: 'VidLink', 
     enabled: true, 
     method: 'path', 
-    baseUrl: 'https://smashy.stream/tv/{tmdbId}?s={season}&e={episode}'
+    baseUrl: 'https://vidlink.pro/tv/{tmdbId}/{season}/{episode}',
+    idType: 'tmdb'
   },
-  // Embed.su for TV
+  // Embed.su — accepts TMDB IDs
   { 
     id: 'embedsu', 
     name: 'Embed.su', 
     enabled: true, 
     method: 'path', 
-    baseUrl: 'https://embed.su/embed/tv/{tmdbId}/{season}/{episode}'
+    baseUrl: 'https://embed.su/embed/tv/{tmdbId}/{season}/{episode}',
+    idType: 'tmdb'
   },
-  // VidFast for TV
+  // VidFast — accepts TMDB IDs
   { 
     id: 'vidfast', 
     name: 'VidFast', 
     enabled: true, 
     method: 'path', 
-    baseUrl: 'https://vidfast.pro/tv/{tmdbId}/{season}/{episode}'
+    baseUrl: 'https://vidfast.pro/tv/{tmdbId}/{season}/{episode}',
+    idType: 'tmdb'
   },
-  // MoviesAPI for TV
-  { 
-    id: 'moviesapi', 
-    name: 'MoviesAPI', 
-    enabled: true, 
-    method: 'path', 
-    baseUrl: 'https://moviesapi.club/tv/{tmdbId}-{season}-{episode}'
-  },
-  // CineSrc for TV
+  // CineSrc — accepts TMDB IDs
   { 
     id: 'cinesrc', 
     name: 'CineSrc', 
@@ -184,7 +166,8 @@ const seriesSources = [
       tmdb: '{tmdbId}', 
       season: '{season}', 
       episode: '{episode}' 
-    }
+    },
+    idType: 'tmdb'
   }
 ];
 
@@ -196,50 +179,68 @@ function getEnabledSeriesSources() {
   return seriesSources.filter(s => s.enabled); 
 }
 
-function buildMovieUrl(sourceId, tmdbId) {
+// buildMovieUrl now accepts either TMDB ID or IMDb ID
+// The server passes the appropriate ID based on the source's idType
+function buildMovieUrl(sourceId, idOrImdbId, tmdbId) {
   const source = movieSources.find(s => s.id === sourceId && s.enabled);
-  if (!source || !tmdbId) return '';
-
-  if (source.method === 'path') {
-    return source.baseUrl.replace(/\{tmdbId\}/g, encodeURIComponent(String(tmdbId)));
-  }
-
-  if (source.method === 'query') {
-    const params = new URLSearchParams();
-    Object.entries(source.params || {}).forEach(([key, value]) => {
-      params.append(key, String(value).replace(/\{tmdbId\}/g, String(tmdbId)));
-    });
-    return `${source.baseUrl}?${params.toString()}`;
-  }
-
-  return '';
-}
-
-function buildSeriesUrl(sourceId, tmdbId, season, episode) {
-  const source = seriesSources.find(s => s.id === sourceId && s.enabled);
-  if (!source || !tmdbId) return '';
-
-  const s = parseInt(season) || 1;
-  const e = parseInt(episode) || 1;
-
+  if (!source) return '';
+  
+  // Use the right ID based on what the provider expects
+  const idToUse = source.idType === 'imdb' ? idOrImdbId : (tmdbId || idOrImdbId);
+  
+  if (!idToUse) return '';
+  
   if (source.method === 'path') {
     return source.baseUrl
-      .replace(/\{tmdbId\}/g, encodeURIComponent(String(tmdbId)))
-      .replace(/\{season\}/g, s)
-      .replace(/\{episode\}/g, e);
+      .replace(/\{imdbId\}/g, encodeURIComponent(String(idToUse)))
+      .replace(/\{tmdbId\}/g, encodeURIComponent(String(idToUse)));
   }
-
+  
   if (source.method === 'query') {
     const params = new URLSearchParams();
     Object.entries(source.params || {}).forEach(([key, value]) => {
       params.append(key, String(value)
-        .replace(/\{tmdbId\}/g, String(tmdbId))
+        .replace(/\{imdbId\}/g, String(idToUse))
+        .replace(/\{tmdbId\}/g, String(idToUse)));
+    });
+    return `${source.baseUrl}?${params.toString()}`;
+  }
+  
+  return '';
+}
+
+function buildSeriesUrl(sourceId, idOrImdbId, season, episode, tmdbId) {
+  const source = seriesSources.find(s => s.id === sourceId && s.enabled);
+  if (!source) return '';
+  
+  const s = parseInt(season) || 1;
+  const e = parseInt(episode) || 1;
+  
+  // Use the right ID based on what the provider expects
+  const idToUse = source.idType === 'imdb' ? idOrImdbId : (tmdbId || idOrImdbId);
+  
+  if (!idToUse) return '';
+  
+  if (source.method === 'path') {
+    return source.baseUrl
+      .replace(/\{imdbId\}/g, encodeURIComponent(String(idToUse)))
+      .replace(/\{tmdbId\}/g, encodeURIComponent(String(idToUse)))
+      .replace(/\{season\}/g, s)
+      .replace(/\{episode\}/g, e);
+  }
+  
+  if (source.method === 'query') {
+    const params = new URLSearchParams();
+    Object.entries(source.params || {}).forEach(([key, value]) => {
+      params.append(key, String(value)
+        .replace(/\{imdbId\}/g, String(idToUse))
+        .replace(/\{tmdbId\}/g, String(idToUse))
         .replace(/\{season\}/g, s)
         .replace(/\{episode\}/g, e));
     });
     return `${source.baseUrl}?${params.toString()}`;
   }
-
+  
   return '';
 }
 
