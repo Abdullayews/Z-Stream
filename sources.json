@@ -1,16 +1,16 @@
 [
   {
     "name": "PrimeSrc",
-    "base_url": "https://primesrc.me/embed/movie?tmdb=",
+    "base_url": "https://primesrc.me/embed/",
     "format": "query"
   },
   {
     "name": "VidSrc",
-    "base_url": "https://vidsrc.to/embed/movie/"
+    "base_url": "https://vidsrc.to/embed/"
   },
   {
     "name": "VidSrc.xyz",
-    "base_url": "https://vidsrc.xyz/embed/movie/"
+    "base_url": "https://vidsrc.xyz/embed/"
   },
   {
     "name": "2Embed.cc",
@@ -34,10 +34,10 @@
   },
   {
     "name": "Embed.su",
-    "base_url": "https://embed.su/embed/movie/"
+    "base_url": "https://embed.su/embed/"
   },
   {
     "name": "AutoEmbed",
-    "base_url": "https://autoembed.cc/embed/movie/"
+    "base_url": "https://autoembed.cc/embed/"
   }
 ]
