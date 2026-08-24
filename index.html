@@ -248,7 +248,7 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
   <div class="portal-body">
     <div class="vframe">
       <div class="vplaceholder" id="vplaceholder"><h3>Select a server below to start watching.</h3></div>
-  <iframe id="uvideo" sandbox="allow-scripts allow-same-origin allow-forms allow-presentation allow-popups" referrerpolicy="no-referrer" allowfullscreen frameborder="0" style="display:none; width:100%; height:100%; border:none;"></iframe>
+      <iframe id="uvideo" sandbox="allow-scripts allow-same-origin allow-forms allow-presentation allow-popups" referrerpolicy="no-referrer" allowfullscreen frameborder="0" style="display:none; width:100%; height:100%; border:none;"></iframe>
     </div>
     <div class="player-info">
       <div>
@@ -341,11 +341,10 @@ async function fetchMovies() { try { const r = await fetch(`${API_BASE}/movies`)
 async function fetchCats() { try { const r = await fetch(`${API_BASE}/categories`); return r.ok ? r.json() : [{id:'all', name:'All'}]; } catch (e) { return [{id:'all', name:'All'}]; } }
 async function fetchSources(id) { try { const r = await fetch(`${API_BASE}/sources?id=${id}`); return r.ok ? r.json() : []; } catch (e) { return []; } }
 
-// --- HERO SLIDER LOGIC (Shows Top 10 Latest Items) ---
+// --- HERO SLIDER LOGIC ---
 let heroItems = [], heroIndex = 0, heroInterval;
 
 function initHero(items) {
-  // Sort by release_date descending and take the top 10
   heroItems = [...items].sort((a, b) => new Date(b.release_date || '1970-01-01') - new Date(a.release_date || '1970-01-01')).slice(0, 10);
   if (heroItems.length === 0) return;
   
