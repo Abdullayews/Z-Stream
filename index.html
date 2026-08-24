@@ -143,7 +143,7 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
 .empty h3 { font-family: 'Orbitron', sans-serif; font-size: 18px; color: var(--fog); margin-bottom: 12px; }
 .empty p { font-size: 15px; max-width: 400px; color: var(--dust); }
 
-/* --- PLAYER UI OVERHAUL --- */
+/* --- PERFECTED PLAYER UI --- */
 .portal { display: none; position: fixed; inset: 0; background: #000000; z-index: 1000; overflow-y: auto; }
 .portal.on { display: flex; flex-direction: column; }
 .portal-head { display: flex; justify-content: flex-end; padding: 20px 40px; position: sticky; top: 0; z-index: 10; }
@@ -151,8 +151,8 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
 .portal-x:hover { color: var(--lava); }
 .portal-x svg { width: 28px; height: 28px; }
 
-.portal-body { padding: 0 40px 40px; max-width: 1400px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 24px; }
-.vframe { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; box-shadow: 0 20px 50px rgba(0,0,0,0.8); }
+.portal-body { padding: 0 40px 40px; max-width: 1400px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 24px; position: relative; height: calc(100vh - 100px); overflow-y: auto; }
+.vframe { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; overflow: hidden; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; box-shadow: 0 20px 50px rgba(0,0,0,0.8); max-height: 65vh; }
 .vframe iframe { width: 100%; height: 100%; border: none; }
 .vplaceholder { text-align: center; color: var(--ash); padding: 48px; }
 
@@ -161,7 +161,7 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
 .server-btn:hover { background: rgba(229,9,20,0.15); color: var(--text); transform: translateY(-2px); }
 .server-btn.active { background: linear-gradient(135deg, var(--magma), var(--lava)); color: #fff; box-shadow: 0 4px 15px rgba(229,9,20,0.4); }
 
-.info-row { display: flex; gap: 24px; background: rgba(10, 0, 0, 0.5); border: 1px solid var(--border); border-radius: 16px; padding: 24px; }
+.info-row { display: flex; gap: 24px; background: rgba(10, 0, 0, 0.5); border: 1px solid var(--border); border-radius: 16px; padding: 24px; flex-shrink: 0; }
 .info-poster { width: 120px; height: 180px; object-fit: cover; border-radius: 12px; flex-shrink: 0; background: #111; }
 .info-details { flex: 1; display: flex; flex-direction: column; }
 .info-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
@@ -196,7 +196,9 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
 ::-webkit-scrollbar-thumb { background: var(--rust); }
 ::-webkit-scrollbar-thumb:hover { background: var(--lava); }
 
-@media (max-width: 768px) { .topbar-inner { padding: 0 20px; } .navlinks { display: none; } .hero { padding: 32px; } .grid { padding: 0 20px; } .hero-dots { left: 32px; bottom: 20px; } .hero-arrow { display: none; } .portal-body { padding: 0 20px 20px; } .info-row { flex-direction: column; } .info-poster { width: 100%; height: 250px; } }
+/* Enforce 5x2 Grid on Home, with mobile fallback */
+@media (min-width: 1024px) { .grid { grid-template-columns: repeat(5, 1fr) !important; } }
+@media (max-width: 768px) { .topbar-inner { padding: 0 20px; } .navlinks { display: none; } .hero { padding: 32px; } .grid { padding: 0 20px; grid-template-columns: repeat(2, 1fr) !important; } .hero-dots { left: 32px; bottom: 20px; } .hero-arrow { display: none; } .portal-body { padding: 0 20px 20px; } .info-row { flex-direction: column; } .info-poster { width: 100%; height: 250px; } }
 </style>
 </head>
 <body>
@@ -258,7 +260,7 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
   <div class="empty" id="empty" style="display:none;"><h3 id="emptyTitle">Empty</h3><p id="emptyDesc">Nothing exists here yet.</p></div>
 </main>
 
-<!-- Redesigned Player Page -->
+<!-- Perfected Player Page -->
 <div class="portal" id="portal">
   <div class="portal-head">
     <button class="portal-x" onclick="closePlayer()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
@@ -416,17 +418,33 @@ function card(m) {
   const rating = parseFloat(m.rating).toFixed(1);
   return `<div class="card"><div style="position:relative;overflow:hidden;" onclick="openPlayer(${m.id})"><img src="${m.poster}" class="card-img" alt="${m.title}" loading="lazy"><div class="card-badges"><div class="badge-rate">${rating}</div></div><div class="card-overlay"><div class="playbtn"><svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg></div></div></div><button class="card-fav" onclick="event.stopPropagation();toggleFav(${m.id})"><svg width="14" height="14" viewBox="0 0 24 24" fill="${fav?'currentColor':'none'}" stroke="currentColor" stroke-width="2.2"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg></button><div class="card-info"><div class="card-title">${m.title}</div><div class="card-meta"><span>${m.release_date}</span><span class="sep"></span><span>${m.genre}</span></div></div></div>`;
 }
+
+// PERFECTED 5x2 GRID LIMIT
 function renderSection(title, movies, sid='') {
   const id = sid || 's_' + Math.random().toString(36).substr(2, 9);
   const hh = title ? `<div class="sec-head"><h2 class="sec-title">${title}</h2></div>` : '';
-  document.getElementById('sections').insertAdjacentHTML('beforeend', `${hh}<div class="grid" id="${id}">${movies.length>0?movies.map(card).join(''):skel()}</div>`);
+  const gridItems = movies.length > 0 ? movies.map(card).join('') : skel(10);
+  document.getElementById('sections').insertAdjacentHTML('beforeend', `${hh}<div class="grid" id="${id}">${gridItems}</div>`);
 }
+
 function renderSections(movies, cats) {
   document.getElementById('sections').innerHTML = '';
-  if (cat !== 'all') { const f = movies.filter(m => m.genre === cat); renderSection(cat, f); return; }
-  const gmap = {}; movies.forEach(m => { if(!gmap[m.genre]) gmap[m.genre]=[]; gmap[m.genre].push(m); });
-  Object.entries(gmap).forEach(([g,items]) => renderSection(g, items));
+  if (cat !== 'all') {
+    const f = movies.filter(m => m.genre === cat).slice(0, 20);
+    renderSection(cat, f);
+    return;
+  }
+  const gmap = {};
+  movies.forEach(m => {
+    if (!gmap[m.genre]) gmap[m.genre] = [];
+    gmap[m.genre].push(m);
+  });
+  Object.entries(gmap).forEach(([g, items]) => {
+    const limitedItems = items.slice(0, 20);
+    renderSection(g, limitedItems);
+  });
 }
+
 function filterCategory(cid) { cat = cid; document.querySelectorAll('.catpill').forEach(t => t.classList.remove('active')); document.querySelector(`.catpill[data-cat="${cid}"]`)?.classList.add('active'); if (view === 'home') renderSections(allMovies, allCats); }
 function toggleFav(id) {
   const m = allMovies.find(x => x.id === id) || currentMovie; if (!m) return;
@@ -526,7 +544,7 @@ function selSrc(btn, name) {
   
   const vframe = document.getElementById('vframe');
   const oldIframe = document.getElementById('uvideo');
-  if (oldIframe) oldIframe.remove();
+  if (oldIframe) oldIframe.remove(); // Destroy old iframe to fix PrimeSrc dropdown click bug
   
   const iframe = document.createElement('iframe');
   iframe.id = 'uvideo';
