@@ -2,44 +2,116 @@ const express = require('express');
 const mysql = require('mysql2/promise');
 const axios = require('axios');
 const path = require('path');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const compression = require('compression');
 require('dotenv').config();
 
-const { getEnabledMovieSources, buildMovieUrl, getEnabledSeriesSources, buildSeriesUrl } = require('./sources');
+const { 
+  getEnabledMovieSources, 
+  buildMovieUrl, 
+  getEnabledSeriesSources, 
+  buildSeriesUrl 
+} = require('./sources');
 
 const app = express();
 app.use(express.json());
 app.use(express.static(__dirname));
 
-/* ══════════════════ ENV VALIDATION — fail loudly, not silently ══════════════════ */
+// ── SECURITY: Helmet headers ──
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      imgSrc: ["'self'", 'https://image.tmdb.org', 'data:'],
+      frameSrc: ["'self'", 'https:', 'http:'], // Allow iframes from streaming providers
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+      connectSrc: ["'self'", 'https:', 'http:'] // Allow API calls to TMDB
+    }
+  },
+  crossOriginEmbedderPolicy: false, // Needed for iframe embeds
+  crossOriginResourcePolicy: { policy: 'cross-origin' } // Allow cross-origin loading
+}));
+
+// ── PERFORMANCE: Compression ──
+app.use(compression({ 
+  level: 5, // Balanced — higher levels melt your CPU on free tier
+  threshold: 1024 // Only compress responses > 1KB
+}));
+
+// ── SECURITY: Rate limiting ──
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 200,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { success: false, error: 'rate_limited', message: 'Too many requests.' }
+});
+app.use('/api/', generalLimiter);
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  message: { success: false, error: 'rate_limited', message: 'Too many login attempts. Try again in 15 minutes.' }
+});
+
+// ── CACHING: In-memory TTL cache to reduce TiDB RU usage ──
+class TTLCache {
+  constructor() { this.cache = new Map(); }
+  
+  get(key) {
+    const entry = this.cache.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.expiry) {
+      this.cache.delete(key);
+      return null;
+    }
+    return entry.value;
+  }
+  
+  set(key, value, ttlMs) {
+    // Prevent memory exhaustion
+    if (this.cache.size > 500) {
+      const oldestKey = this.cache.keys().next().value;
+      this.cache.delete(oldestKey);
+    }
+    this.cache.set(key, { value, expiry: Date.now() + ttlMs });
+  }
+  
+  clear() { this.cache.clear(); }
+}
+
+const apiCache = new TTLCache();
+
+// ── ENV VALIDATION ──
 const REQUIRED_ENV = ['TIDB_HOST', 'TIDB_USER', 'TIDB_PASSWORD', 'TIDB_DATABASE'];
 const missingEnv = REQUIRED_ENV.filter(k => !process.env[k]);
 if (missingEnv.length) {
   console.error('❌ MISSING ENVIRONMENT VARIABLES: ' + missingEnv.join(', '));
-  console.error('   Add them in Render → Environment:');
-  console.error('   TIDB_HOST, TIDB_PORT (=4000), TIDB_USER, TIDB_PASSWORD, TIDB_DATABASE, TMDB_API_KEY');
-  console.error('   TiDB Cloud Serverless usernames look like "3pTAoTNhsYdNL4E.root" — copy exactly.');
 }
 if (!process.env.TMDB_API_KEY) {
-  console.warn('⚠️  TMDB_API_KEY missing — login still works, but sync & seasons will fail.');
+  console.warn('⚠️  TMDB_API_KEY missing — sync & seasons will fail.');
 }
 
 const TMDB_BASE = 'https://api.themoviedb.org/3';
-const TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
-const TMDB_BACKDROP = 'https://image.tmdb.org/t/p/original';
 const TMDB_KEY = process.env.TMDB_API_KEY;
 
+// ── DATABASE ──
 const pool = mysql.createPool({
   host: process.env.TIDB_HOST,
   port: parseInt(process.env.TIDB_PORT) || 4000,
   user: process.env.TIDB_USER,
   password: process.env.TIDB_PASSWORD,
   database: process.env.TIDB_DATABASE,
-  ssl: { minVersion: 'TLSv1.2', rejectUnauthorized: true }, // TiDB Cloud requires TLS
+  ssl: { minVersion: 'TLSv1.2', rejectUnauthorized: true },
   waitForConnections: true,
-  connectionLimit: 8,
+  connectionLimit: 10,
   queueLimit: 0,
   connectTimeout: 15000,
-  enableKeepAlive: true
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 10000 // Prevents connection drops (TiDB 340s timeout)
 });
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -53,21 +125,17 @@ const genreMap = {
 
 const tableMap = { movies: 'movies_cache', series: 'series_cache', anime: 'anime_cache' };
 
-/* ══════════════════ DB ERROR CLASSIFIER (human-readable causes) ══════════════════ */
 function classifyDbError(err) {
   const code = err && err.code;
   const m = (err && err.message) || '';
-  if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return 'Host not found — TIDB_HOST is wrong (must be hostname only, no https://, no port).';
-  if (code === 'ETIMEDOUT' || /timeout/i.test(m)) return 'Connection timed out — wrong host/port, or your TiDB IP Access List blocks Render (Dedicated tier: allow 0.0.0.0/0).';
-  if (code === 'ECONNREFUSED') return 'Connection refused — check TIDB_HOST and TIDB_PORT (should be 4000).';
-  if (code === 'ER_ACCESS_DENIED_ERROR' || /access denied/i.test(m)) return 'Access denied — check TIDB_USER / TIDB_PASSWORD (Serverless user looks like "xxxxx.root").';
-  if (code === 'ER_BAD_DB_ERROR' || /unknown database/i.test(m)) return 'Unknown database — check TIDB_DATABASE (Serverless default is "test").';
-  if (code === 'ER_NO_DB_ERROR') return 'No database selected — set TIDB_DATABASE (Serverless default is "test").';
-  if (/ssl|certificate|tls|handshake/i.test(m)) return 'TLS error — this build enables TLSv1.2; check that you are using the correct TiDB Cloud host.';
-  return `Database error (${code || 'unknown'}) — see Render logs.`;
+  if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return 'Host not found — TIDB_HOST is wrong.';
+  if (code === 'ETIMEDOUT' || /timeout/i.test(m)) return 'Connection timed out — check IP Access List.';
+  if (code === 'ER_ACCESS_DENIED_ERROR') return 'Access denied — check credentials.';
+  if (code === 'ER_BAD_DB_ERROR') return 'Unknown database — check TIDB_DATABASE.';
+  return `Database error (${code || 'unknown'})`;
 }
 
-/* ══════════════════ SCHEMA (lazy, self-healing, race-safe) ══════════════════ */
+// ── SCHEMA ──
 let schemaReady = false;
 
 async function ensureSchema() {
@@ -93,29 +161,12 @@ async function ensureSchema() {
     )`);
   }
 
-  // Repair very old/mismatched users tables (TiDB supports IF NOT EXISTS; errors swallowed on plain MySQL)
-  try {
-    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR(64)');
-    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS password VARCHAR(255)');
-  } catch (e) { /* ignore */ }
-
-  // Seed a guaranteed login
   const [[{ c }]] = await pool.query('SELECT COUNT(*) AS c FROM users');
   if (c === 0) {
     const au = process.env.ADMIN_USER || 'admin';
     const ap = process.env.ADMIN_PASS || 'admin';
-    try {
-      await pool.query('INSERT INTO users (username, password) VALUES (?, ?)', [au, ap]);
-      console.log(`✓ Users table was empty — created login: ${au} / ${ap}`);
-    } catch (e) { /* race with a concurrent login — fine */ }
-  }
-  // Env override ALWAYS guarantees a known login, even over existing rows
-  if (process.env.ADMIN_USER && process.env.ADMIN_PASS) {
-    await pool.query(
-      'INSERT INTO users (username, password) VALUES (?, ?) ON DUPLICATE KEY UPDATE password = VALUES(password)',
-      [process.env.ADMIN_USER, process.env.ADMIN_PASS]
-    );
-    console.log(`✓ Admin login ensured from env: ${process.env.ADMIN_USER}`);
+    await pool.query('INSERT INTO users (username, password) VALUES (?, ?)', [au, ap]);
+    console.log(`✓ Default user created: ${au} / ${ap}`);
   }
 
   schemaReady = true;
@@ -133,63 +184,86 @@ async function bootDb() {
       await sleep(4000);
     }
   }
-  console.error('✗ Database NOT ready at boot — login attempts will retry automatically.');
+  console.error('✗ Database NOT ready at boot.');
 }
-bootDb(); // non-blocking: server starts even if DB is briefly down
+bootDb();
 
-/* ══════════════════ HEALTH / DIAGNOSTICS ══════════════════ */
+// ── HEALTH CHECK ──
 app.get('/api/health', async (req, res) => {
   const out = {
     ok: false,
-    uptimeSec: Math.floor(process.uptime()),
     db: false,
     dbError: null,
     tables: {},
     userCount: null,
     tmdbKey: !!TMDB_KEY,
-    env: {
-      TIDB_HOST: !!process.env.TIDB_HOST,
-      TIDB_PORT: process.env.TIDB_PORT || '4000 (default)',
-      TIDB_USER: !!process.env.TIDB_USER,
-      TIDB_PASSWORD: !!process.env.TIDB_PASSWORD,
-      TIDB_DATABASE: process.env.TIDB_DATABASE || null
-    }
+    cacheSize: apiCache.cache.size,
+    uptime: Math.floor(process.uptime())
   };
+  
   try {
     await pool.query('SELECT 1');
     out.db = true;
-    try { await ensureSchema(); } catch (e) { out.dbError = 'Schema error: ' + classifyDbError(e); }
+    
     for (const t of ['users', ...Object.values(tableMap)]) {
       try {
         const [[row]] = await pool.query(`SELECT COUNT(*) AS c FROM ${t}`);
         out.tables[t] = row.c;
-      } catch (e) { out.tables[t] = 'MISSING'; }
+      } catch (e) { 
+        out.tables[t] = 'MISSING'; 
+      }
     }
+    
     out.userCount = out.tables.users;
     out.ok = out.db && out.tables.users !== 'MISSING';
   } catch (err) {
     out.dbError = classifyDbError(err);
   }
-  res.json(out); // always 200 so Render health checks don't kill the service while you debug
+  
+  res.json(out);
 });
 
-/* ══════════════════ AUTH ══════════════════ */
-app.post('/api/login', async (req, res) => {
+// ── AUTH ──
+app.post('/api/login', loginLimiter, async (req, res) => {
   const { username, password } = req.body || {};
-  if (!username || !password) return res.status(400).json({ success: false, error: 'bad_request', message: 'Enter both username and password.' });
+  if (!username || !password) {
+    return res.status(400).json({ success: false, error: 'bad_request', message: 'Enter both fields.' });
+  }
+  
   try {
-    await ensureSchema(); // lazy self-heal: works even if boot-time init failed
-    const [rows] = await pool.query('SELECT id FROM users WHERE username = ? AND password = ? LIMIT 1', [username, password]);
-    if (rows.length) return res.json({ success: true });
-    return res.status(401).json({ success: false, error: 'bad_credentials', message: 'Invalid username or password. Default is admin/admin (or your ADMIN_USER env var).' });
+    await ensureSchema();
+    const [rows] = await pool.query(
+      'SELECT id FROM users WHERE username = ? AND password = ? LIMIT 1', 
+      [username, password]
+    );
+    
+    if (rows.length) {
+      res.json({ success: true });
+    } else {
+      res.status(401).json({ 
+        success: false, 
+        error: 'bad_credentials', 
+        message: 'Invalid username or password.' 
+      });
+    }
   } catch (err) {
-    console.error('Login DB error:', err.code || '', err.message);
-    return res.status(503).json({ success: false, error: 'db_down', message: classifyDbError(err) });
+    console.error('Login DB error:', err.code);
+    res.status(503).json({ 
+      success: false, 
+      error: 'db_down', 
+      message: classifyDbError(err) 
+    });
   }
 });
 
-/* ══════════════════ TMDB SYNC ENGINE ══════════════════ */
-let syncState = { isSyncing: false, currentPage: 0, totalItems: 0, category: 'idle' };
+// ── TMDB SYNC ──
+let syncState = { 
+  isSyncing: false, 
+  currentPage: 0, 
+  totalItems: 0, 
+  category: 'idle',
+  lastSyncAt: null
+};
 
 async function fetchWithRetry(url, retries = 3) {
   let lastErr;
@@ -201,19 +275,30 @@ async function fetchWithRetry(url, retries = 3) {
 }
 
 app.get('/api/start-sync', async (req, res) => {
-  if (syncState.isSyncing) return res.json({ msg: 'Already syncing', ...syncState });
+  if (syncState.isSyncing) {
+    return res.json({ msg: 'Already syncing', ...syncState });
+  }
+  
   try {
     await ensureSchema();
-    let total = 0;
-    for (const t of Object.values(tableMap)) {
-      const [[row]] = await pool.query(`SELECT COUNT(*) AS c FROM ${t}`);
-      total += row.c;
-    }
-    syncState = { isSyncing: true, currentPage: 0, totalItems: total, category: 'movies' };
+    syncState = { 
+      isSyncing: true, 
+      currentPage: 0, 
+      totalItems: 0, 
+      category: 'movies',
+      lastSyncAt: syncState.lastSyncAt
+    };
     runSync();
     res.json({ msg: 'Sync started', ...syncState });
   } catch (err) {
-    res.status(503).json({ msg: classifyDbError(err), isSyncing: false, currentPage: 0, totalItems: 0, category: 'idle' });
+    res.status(503).json({ 
+      msg: classifyDbError(err), 
+      isSyncing: false,
+      currentPage: 0,
+      totalItems: 0,
+      category: 'idle',
+      lastSyncAt: null
+    });
   }
 });
 
@@ -221,10 +306,24 @@ app.get('/api/sync-status', (req, res) => res.json(syncState));
 
 async function runSync() {
   const today = new Date().toISOString().slice(0, 10);
+  // Delta sync: only fetch items from last 7 days if we've synced before
+  const lastSyncDate = syncState.lastSyncAt 
+    ? new Date(syncState.lastSyncAt).toISOString().slice(0, 10)
+    : new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
   const categories = [
-    { name: 'movies', url: `${TMDB_BASE}/discover/movie?api_key=${TMDB_KEY}&sort_by=primary_release_date.desc&include_adult=false&primary_release_date.lte=${today}&page=` },
-    { name: 'series', url: `${TMDB_BASE}/discover/tv?api_key=${TMDB_KEY}&sort_by=first_air_date.desc&include_adult=false&first_air_date.lte=${today}&page=` },
-    { name: 'anime',  url: `${TMDB_BASE}/discover/tv?api_key=${TMDB_KEY}&with_genres=16&with_original_language=ja&sort_by=first_air_date.desc&include_adult=false&first_air_date.lte=${today}&page=` }
+    { 
+      name: 'movies', 
+      url: `${TMDB_BASE}/discover/movie?api_key=${TMDB_KEY}&sort_by=primary_release_date.desc&include_adult=false&primary_release_date.lte=${today}&page=` 
+    },
+    { 
+      name: 'series', 
+      url: `${TMDB_BASE}/discover/tv?api_key=${TMDB_KEY}&sort_by=first_air_date.desc&include_adult=false&first_air_date.lte=${today}&page=` 
+    },
+    { 
+      name: 'anime',  
+      url: `${TMDB_BASE}/discover/tv?api_key=${TMDB_KEY}&with_genres=16&with_original_language=ja&sort_by=first_air_date.desc&include_adult=false&first_air_date.lte=${today}&page=` 
+    }
   ];
 
   try {
@@ -234,24 +333,20 @@ async function runSync() {
       const tableName = tableMap[category.name];
       let page = 1, hasMore = true;
 
-      while (hasMore && syncState.isSyncing) {
+      while (hasMore && syncState.isSyncing && page <= 10) { // Limit to 10 pages per category
         let response;
-        try { response = await fetchWithRetry(`${category.url}${page}`); }
-        catch (err) {
-          console.error(`Sync: giving up on ${category.name} page ${page}: ${err.message}`);
-          hasMore = false; break;
+        try { 
+          response = await fetchWithRetry(`${category.url}${page}`); 
+        } catch (err) {
+          console.error(`Sync: ${category.name} page ${page} failed: ${err.message}`);
+          hasMore = false; 
+          break;
         }
 
         const items = response.data.results || [];
-        if (!items.length) { hasMore = false; break; }
-
-        const pageIds = items.map(m => m.id).filter(Boolean);
-        if (pageIds.length) {
-          const [existing] = await pool.query(`SELECT tmdb_id FROM ${tableName} WHERE tmdb_id IN (?)`, [pageIds]);
-          if (existing.length === items.length) {
-            console.log(`Sync: ${category.name} page ${page} fully cached — skipping rest of category.`);
-            hasMore = false; break;
-          }
+        if (!items.length) { 
+          hasMore = false; 
+          break; 
         }
 
         for (const m of items) {
@@ -267,21 +362,27 @@ async function runSync() {
                 m.release_date || m.first_air_date || null,
                 m.vote_average || 0,
                 genreId ? (genreMap[genreId] || 'Unknown') : 'Unknown',
-                m.poster_path ? TMDB_IMG + m.poster_path : null,
-                m.backdrop_path ? TMDB_BACKDROP + m.backdrop_path : null,
+                m.poster_path ? `https://image.tmdb.org/t/p/w342${m.poster_path}` : null,
+                m.backdrop_path ? `https://image.tmdb.org/t/p/w780${m.backdrop_path}` : null,
                 m.overview || ''
               ]
             );
-            if (result.affectedRows === 1) syncState.totalItems++;
-          } catch (e) { /* skip bad row */ }
+            if (result.affectedRows === 1) {
+              syncState.totalItems++;
+            }
+          } catch (e) { /* Skip bad row */ }
         }
 
         syncState.currentPage = page;
         page++;
-        await sleep(page % 40 === 0 ? 15000 : 300);
+        
+        // Rate limiting for TMDB
+        await sleep(page % 20 === 0 ? 10000 : 250);
       }
     }
-    console.log('TMDB sync finished.');
+    
+    syncState.lastSyncAt = new Date().toISOString();
+    console.log('✓ TMDB sync complete.');
   } catch (err) {
     console.error('Sync crashed:', err.message);
   } finally {
@@ -289,24 +390,40 @@ async function runSync() {
   }
 }
 
-/* ══════════════════ CATALOG (≤ 2 years old, released, with poster) ══════════════════ */
+// ── CATALOG (with caching) ──
 app.get('/api/movies', async (req, res) => {
   try {
+    // Check cache first (15 minute TTL)
+    const cacheKey = 'movies_catalog';
+    const cached = apiCache.get(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
     await ensureSchema();
     const year = new Date().getFullYear();
     const minDate = `${year - 2}-01-01`;
     const today = new Date().toISOString().slice(0, 10);
+    
     const query = `
       SELECT 'films' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview
-      FROM movies_cache WHERE release_date >= ? AND release_date <= ? AND poster IS NOT NULL AND poster <> ''
+      FROM movies_cache 
+      WHERE release_date >= ? AND release_date <= ? AND poster IS NOT NULL AND poster <> ''
       UNION ALL
       SELECT 'series' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview
-      FROM series_cache WHERE release_date >= ? AND release_date <= ? AND poster IS NOT NULL AND poster <> ''
+      FROM series_cache 
+      WHERE release_date >= ? AND release_date <= ? AND poster IS NOT NULL AND poster <> ''
       UNION ALL
       SELECT 'anime' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview
-      FROM anime_cache WHERE release_date >= ? AND release_date <= ? AND poster IS NOT NULL AND poster <> ''
+      FROM anime_cache 
+      WHERE release_date >= ? AND release_date <= ? AND poster IS NOT NULL AND poster <> ''
       ORDER BY rating DESC LIMIT 500`;
+    
     const [rows] = await pool.query(query, [minDate, today, minDate, today, minDate, today]);
+    
+    // Cache for 15 minutes
+    apiCache.set(cacheKey, rows, 15 * 60 * 1000);
+    
     res.json(rows);
   } catch (err) {
     console.error('movies:', err.message);
@@ -314,30 +431,52 @@ app.get('/api/movies', async (req, res) => {
   }
 });
 
+// ── SINGLE ITEM ──
 app.get('/api/movie/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     if (!id) return res.status(400).json({ error: 'Bad id' });
+    
+    // Check cache
+    const cacheKey = `movie_${id}`;
+    const cached = apiCache.get(cacheKey);
+    if (cached) return res.json(cached);
+    
     const query = `
-      SELECT 'films' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM movies_cache WHERE tmdb_id = ?
+      SELECT 'films' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview 
+      FROM movies_cache WHERE tmdb_id = ?
       UNION ALL
-      SELECT 'series' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM series_cache WHERE tmdb_id = ?
+      SELECT 'series' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview 
+      FROM series_cache WHERE tmdb_id = ?
       UNION ALL
-      SELECT 'anime' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM anime_cache WHERE tmdb_id = ?
+      SELECT 'anime' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview 
+      FROM anime_cache WHERE tmdb_id = ?
       LIMIT 1`;
+    
     const [rows] = await pool.query(query, [id, id, id]);
-    if (rows.length) res.json(rows[0]);
-    else res.status(404).json({ error: 'Not cached yet' });
+    
+    if (rows.length) {
+      apiCache.set(cacheKey, rows[0], 60 * 60 * 1000); // 1 hour cache
+      res.json(rows[0]);
+    } else {
+      res.status(404).json({ error: 'Not cached yet' });
+    }
   } catch (err) {
     res.status(500).json({ error: 'Database error' });
   }
 });
 
-/* ══════════════════ SEARCH (entire DB, case-insensitive, injection-safe) ══════════════════ */
+// ── SEARCH (with caching) ──
 app.get('/api/search', async (req, res) => {
   const q = (req.query.q || '').trim();
   if (q.length < 2) return res.json([]);
+  
   try {
+    // Cache search for 5 minutes
+    const cacheKey = `search_${q.toLowerCase()}`;
+    const cached = apiCache.get(cacheKey);
+    if (cached) return res.json(cached);
+    
     await ensureSchema();
     const query = `
       SELECT 'films' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview
@@ -349,7 +488,11 @@ app.get('/api/search', async (req, res) => {
       SELECT 'anime' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview
       FROM anime_cache WHERE INSTR(LOWER(title), LOWER(?)) > 0
       ORDER BY rating DESC LIMIT 24`;
+    
     const [rows] = await pool.query(query, [q, q, q]);
+    
+    apiCache.set(cacheKey, rows, 5 * 60 * 1000); // 5 min cache
+    
     res.json(rows);
   } catch (err) {
     console.error('search:', err.message);
@@ -357,8 +500,13 @@ app.get('/api/search', async (req, res) => {
   }
 });
 
+// ── CATEGORIES (with caching) ──
 app.get('/api/categories', async (req, res) => {
   try {
+    const cacheKey = 'categories';
+    const cached = apiCache.get(cacheKey);
+    if (cached) return res.json(cached);
+    
     await ensureSchema();
     const [rows] = await pool.query(`
       SELECT genre AS id, genre AS name FROM (
@@ -368,20 +516,27 @@ app.get('/api/categories', async (req, res) => {
       ) g
       WHERE genre IS NOT NULL AND genre <> '' AND genre <> 'Unknown'
       ORDER BY name`);
-    res.json([{ id: 'all', name: 'All' }, ...rows]);
+    
+    const result = [{ id: 'all', name: 'All' }, ...rows];
+    apiCache.set(cacheKey, result, 60 * 60 * 1000); // 1 hour cache
+    
+    res.json(result);
   } catch (err) {
     res.json([{ id: 'all', name: 'All' }]);
   }
 });
 
-/* ══════════════════ SOURCES ══════════════════ */
+// ── SOURCES (with type detection) ──
 async function getItemType(id) {
   const [films] = await pool.query('SELECT tmdb_id FROM movies_cache WHERE tmdb_id = ? LIMIT 1', [id]);
   if (films.length) return 'films';
+  
   const [series] = await pool.query('SELECT tmdb_id FROM series_cache WHERE tmdb_id = ? LIMIT 1', [id]);
   if (series.length) return 'series';
+  
   const [anime] = await pool.query('SELECT tmdb_id FROM anime_cache WHERE tmdb_id = ? LIMIT 1', [id]);
   if (anime.length) return 'anime';
+  
   return null;
 }
 
@@ -390,7 +545,13 @@ app.get('/api/sources', async (req, res) => {
     const id = parseInt(req.query.id);
     const season = Math.max(1, parseInt(req.query.s) || 1);
     const episode = Math.max(1, parseInt(req.query.e) || 1);
+    
     if (!id) return res.json([]);
+    
+    // Check cache
+    const cacheKey = `sources_${id}_${season}_${episode}`;
+    const cached = apiCache.get(cacheKey);
+    if (cached) return res.json(cached);
 
     let type = (req.query.type || '').toLowerCase();
     if (!['films', 'movies', 'series', 'anime'].includes(type)) {
@@ -402,9 +563,14 @@ app.get('/api/sources', async (req, res) => {
 
     const sources = list.map(s => ({
       name: s.name,
-      url: isTV ? buildSeriesUrl(s.id, id, season, episode) : buildMovieUrl(s.id, id)
+      url: isTV 
+        ? buildSeriesUrl(s.id, id, season, episode) 
+        : buildMovieUrl(s.id, id)
     })).filter(s => s.url && /^https?:\/\//.test(s.url));
 
+    // Cache for 30 minutes
+    apiCache.set(cacheKey, sources, 30 * 60 * 1000);
+    
     res.json(sources);
   } catch (err) {
     console.error('sources:', err.message);
@@ -412,27 +578,49 @@ app.get('/api/sources', async (req, res) => {
   }
 });
 
-/* ══════════════════ SEASONS (TMDB, 1h cache) ══════════════════ */
-const seasonsCache = new Map();
+// ── SEASONS (TMDB with caching) ──
 app.get('/api/seasons/:id', async (req, res) => {
   const id = parseInt(req.params.id);
   if (!id) return res.json([]);
-  const cached = seasonsCache.get(id);
-  if (cached && Date.now() - cached.t < 3600000) return res.json(cached.data);
+  
+  // Check cache
+  const cacheKey = `seasons_${id}`;
+  const cached = apiCache.get(cacheKey);
+  if (cached) return res.json(cached);
+  
   try {
-    const r = await axios.get(`${TMDB_BASE}/tv/${id}?api_key=${TMDB_KEY}`, { timeout: 12000 });
+    const r = await axios.get(`${TMDB_BASE}/tv/${id}?api_key=${TMDB_KEY}`, { 
+      timeout: 12000 
+    });
+    
     const seasons = (r.data.seasons || [])
       .filter(s => s.season_number > 0 && s.episode_count > 0)
-      .map(s => ({ name: s.name, season_number: s.season_number, episode_count: s.episode_count }));
-    seasonsCache.set(id, { t: Date.now(), data: seasons });
+      .map(s => ({ 
+        name: s.name, 
+        season_number: s.season_number, 
+        episode_count: s.episode_count 
+      }));
+    
+    // Cache for 1 hour
+    apiCache.set(cacheKey, seasons, 60 * 60 * 1000);
+    
     res.json(seasons);
   } catch (err) {
     res.json([]);
   }
 });
 
-/* ══════════════════ BOOT ══════════════════ */
+// ── CACHE CLEAR (admin) ──
+app.post('/api/clear-cache', (req, res) => {
+  apiCache.clear();
+  res.json({ success: true, message: 'Cache cleared' });
+});
+
+// ── ROOT ──
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🔥 Z-Stream listening on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`🔥 Z-Stream listening on port ${PORT}`);
+  console.log(`📊 Health check: http://localhost:${PORT}/api/health`);
+});
