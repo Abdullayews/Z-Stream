@@ -4,20 +4,12 @@
     "base_url": "https://vidsrc.to/embed/movie/"
   },
   {
-    "name": "VidGod",
-    "base_url": "https://vidgod.com/embed/"
+    "name": "VidSrc.xyz",
+    "base_url": "https://vidsrc.xyz/embed/movie/"
   },
   {
-    "name": "StreamEx",
-    "base_url": "https://streamex.com/embed/"
-  },
-  {
-    "name": "CinemaOS",
-    "base_url": "https://cinemaos.com/embed/"
-  },
-  {
-    "name": "Videasy",
-    "base_url": "https://videasy.net/video/"
+    "name": "2Embed",
+    "base_url": "https://www.2embed.cc/embed/"
   },
   {
     "name": "MultiEmbed",
@@ -26,10 +18,6 @@
   {
     "name": "SuperEmbed",
     "base_url": "https://se.bingetime.eu.org/embed/"
-  },
-  {
-    "name": "2Embed (All)",
-    "base_url": "https://www.2embed.cc/embed/"
   },
   {
     "name": "SmashyStream",
