@@ -94,7 +94,6 @@ async function runSync() {
           const genreName = genreId ? (genreMap[genreId] || 'Unknown') : 'Unknown';
           const title = (m.title || m.name || '').replace(/'/g, "''");
           const overview = (m.overview || '').replace(/'/g, "''");
-          // Fetch full release date (e.g., 2024-05-15)
           const release_date = m.release_date || m.first_air_date || 'Unknown';
           
           await pool.query(
@@ -124,7 +123,7 @@ async function runSync() {
 app.get('/api/movies', async (req, res) => {
   try {
     const currentYear = new Date().getFullYear();
-    const minDate = `${currentYear - 2}-01-01`; // e.g., '2022-01-01'
+    const minDate = `${currentYear - 2}-01-01`;
     
     const query = `
       SELECT 'films' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM movies_cache WHERE release_date >= ?
@@ -159,7 +158,7 @@ app.get('/api/movie/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Database error' }); }
 });
 
-// --- Perfected Search System (Searches ALL years in TiDB) ---
+// --- Perfected Search System ---
 app.get('/api/search', async (req, res) => {
   const q = req.query.q;
   if (!q) return res.json([]);
@@ -258,9 +257,10 @@ app.get('/api/sources', async (req, res) => {
     let url = `${src.base_url}${movieId}`;
     if (isTV) {
       if (src.name === 'VidSrc') url = `https://vidsrc.to/embed/tv/${movieId}/1/1`;
+      else if (src.name === 'VidSrc.xyz') url = `https://vidsrc.xyz/embed/tv/${movieId}/1/1`;
       else if (src.name === 'MultiEmbed') url = `https://multiembed.mov/?video_id=${movieId}&tmdb=1&s=1&e=1`;
       else if (src.name === 'SuperEmbed') url = `https://se.bingetime.eu.org/embedtv/${movieId}/1/1`;
-      else if (src.name === '2Embed (All)') url = `https://www.2embed.cc/embedtv/${movieId}&s=1&e=1`;
+      else if (src.name === '2Embed') url = `https://www.2embed.cc/embedtv/${movieId}&s=1&e=1`;
     }
     dynamicSources.push({ name: src.name, url: url, status: "online", ping: Math.floor(Math.random() * 100) + 20 });
   });
