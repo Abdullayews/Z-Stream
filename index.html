@@ -184,6 +184,8 @@ body { font-family: 'Inter', sans-serif; background: #000000; color: var(--text)
 .vplaceholder p { font-size: 14px; max-width: 420px; }
 .spinner { width: 42px; height: 42px; border: 3px solid rgba(229,9,20,0.2); border-top-color: var(--lava); border-radius: 50%; animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+.direct-btn { position: absolute; top: 10px; right: 10px; z-index: 10; background: rgba(229,9,20,0.85); color: white; border: none; padding: 6px 12px; border-radius: 6px; font-size: 11px; cursor: pointer; font-weight: 600; display: none; }
+.direct-btn:hover { background: var(--flame); }
 
 .sub-head { font-family: 'Orbitron', sans-serif; font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; display: flex; align-items: center; gap: 10px; color: var(--fog); }
 .sub-head::before { content: ''; width: 4px; height: 18px; background: var(--lava); border-radius: 2px; box-shadow: 0 0 12px var(--lava); }
@@ -468,6 +470,7 @@ let view = 'home', cat = 'all', allMovies = [], allCats = [];
 let currentMovie = null, dynamicSources = [], currentSeasons = [];
 let activeSeason = 1, activeEpisode = 1, preferredSource = null;
 let heroItems = [], heroIndex = 0, heroInterval = null;
+let directBtnTimer = null;
 
 /* ─────────── Views ─────────── */
 function switchView(v) {
@@ -741,24 +744,31 @@ function selSrc(btn, name) {
   preferredSource = name;
 
   const source = dynamicSources.find(s => s.name === name);
-  if (!source || !source.url) { showVideoPlaceholder('This source is unavailable.'); return; }
+  if (!source || !source.url) {
+    showVideoPlaceholder('This source is unavailable.');
+    return;
+  }
 
   const vframe = $('vframe');
+
+  // Clean up previous iframe + direct button
   const old = $('uvideo');
   if (old) old.remove();
-
-  const iframe = document.createElement('iframe');
-  iframe.id = 'uvideo';
+  const oldBtn = $('directBtn');
+  if (oldBtn) oldBtn.remove();
+  clearTimeout(directBtnTimer);
 
   /* ══ MAXIMUM-COMPATIBILITY IFRAME ══
-     - NO sandbox attribute at all (sandboxing is what breaks players)
-     - 'no-referrer-when-downgrade' = most permissive referrer policy
-       browsers permit cross-site; providers that validate referrers work
-     - broad `allow` list so no feature is denied to the embed
-     - popups / redirects / top-navigation all permitted */
-  iframe.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
-  iframe.setAttribute('allowfullscreen', 'true');
+     - NO sandbox attribute (nothing is restricted)
+     - No referrerpolicy restriction (server proxy makes it same-origin anyway)
+     - Broad allow list so every feature is available to the embed
+     - The src is routed through /api/embed?url=... on our own server,
+       making the embed SAME-ORIGIN → zero cross-origin restrictions,
+       which is what makes in-player server switching work. */
+  const iframe = document.createElement('iframe');
+  iframe.id = 'uvideo';
   iframe.setAttribute('allow', 'autoplay; fullscreen; encrypted-media; picture-in-picture; accelerometer; gyroscope; clipboard-write; midi; screen-wake-lock; xr-spatial-tracking; gamepad; speaker-selection; display-capture');
+  iframe.setAttribute('allowfullscreen', 'true');
   iframe.setAttribute('frameborder', '0');
   iframe.setAttribute('scrolling', 'no');
   iframe.style.cssText = 'width:100%;height:100%;border:none;display:block;background:#000;';
@@ -767,7 +777,24 @@ function selSrc(btn, name) {
   showVideoLoading(`Connecting to ${name}…`);
   vframe.appendChild(iframe);
 
+  // The URL from the server is already the proxied /api/embed?url=... form
   setTimeout(() => { iframe.src = source.url; }, 50);
+
+  // Fallback: "Open Direct" button appears after 6s if nothing has loaded
+  const directBtn = document.createElement('button');
+  directBtn.id = 'directBtn';
+  directBtn.className = 'direct-btn';
+  directBtn.textContent = '↗ Open Direct';
+  directBtn.onclick = () => {
+    if (source.directUrl) window.open(source.directUrl, '_blank', 'noopener');
+  };
+  vframe.appendChild(directBtn);
+
+  directBtnTimer = setTimeout(() => {
+    if ($('vplaceholder').style.display !== 'none') {
+      directBtn.style.display = 'block';
+    }
+  }, 6000);
 }
 
 let videoLoadTimer = null;
@@ -778,7 +805,7 @@ function showVideoLoading(msg) {
   clearTimeout(videoLoadTimer);
   videoLoadTimer = setTimeout(() => {
     if (ph.style.display !== 'none') {
-      ph.innerHTML = '<p>Still loading… if nothing plays, this server may be down — try another server below.</p>';
+      ph.innerHTML = '<p>Still loading… if nothing plays, this server may be down — try another server below or use “Open Direct”.</p>';
     }
   }, 12000);
 }
@@ -834,6 +861,9 @@ function closePlayer() {
   document.body.style.overflow = '';
   const old = $('uvideo');
   if (old) old.remove();
+  const oldBtn = $('directBtn');
+  if (oldBtn) oldBtn.remove();
+  clearTimeout(directBtnTimer);
   showVideoPlaceholder('Select a server below to start watching.');
   currentMovie = null;
   dynamicSources = [];
