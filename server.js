@@ -70,9 +70,6 @@ async function runSync() {
   ];
 
   for (const cat of categories) {
-    // ... rest of your runSync code remains exactly the same
-
-  for (const cat of categories) {
     if (!syncState.isSyncing) break;
     syncState.category = cat.name;
     const tableName = tableMap[cat.name];
@@ -295,7 +292,7 @@ app.get('/api/sources', async (req, res) => {
     new Promise(resolve => setTimeout(resolve, 6000))
   ]);
 
-   // Add Static Meta-Aggregators from sources.json (Including PrimeSrc)
+  // Add Static Meta-Aggregators from sources.json (Including PrimeSrc)
   sourcesConfig.forEach(src => {
     let url = '';
     
