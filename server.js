@@ -161,7 +161,6 @@ app.get('/api/movie/:id', async (req, res) => {
 app.get('/api/seasons/:id', async (req, res) => {
   try {
     const r = await axios.get(`${TMDB_BASE}/tv/${req.params.id}?api_key=${TMDB_KEY}`);
-    // Filter out specials (season 0)
     const seasons = r.data.seasons.filter(s => s.season_number > 0).map(s => ({
       id: s.id,
       name: s.name,
@@ -173,20 +172,20 @@ app.get('/api/seasons/:id', async (req, res) => {
   } catch (e) { res.status(500).json([]); }
 });
 
-// --- Deep Database Search (Title, Genre, or Year) ---
+// --- Deep Database Search (Strictly by Item Name) ---
 app.get('/api/search', async (req, res) => {
   const q = req.query.q;
   if (!q) return res.json([]);
   try {
     const query = `
-      SELECT 'films' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM movies_cache WHERE title LIKE ? OR genre LIKE ? OR release_date LIKE ?
+      SELECT 'films' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM movies_cache WHERE title LIKE ?
       UNION ALL
-      SELECT 'series' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM series_cache WHERE title LIKE ? OR genre LIKE ? OR release_date LIKE ?
+      SELECT 'series' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM series_cache WHERE title LIKE ?
       UNION ALL
-      SELECT 'anime' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM anime_cache WHERE title LIKE ? OR genre LIKE ? OR release_date LIKE ?
+      SELECT 'anime' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM anime_cache WHERE title LIKE ?
       LIMIT 24
     `;
-    const [rows] = await pool.query(query, [`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`]);
+    const [rows] = await pool.query(query, [`%${q}%`, `%${q}%`, `%${q}%`]);
     res.json(rows);
   } catch (err) { res.status(500).json([]); }
 });
