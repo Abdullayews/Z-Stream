@@ -4,13 +4,12 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const path = require('path');
 const fs = require('fs');
+const { getEnabledMovieSources, buildMovieUrl, getEnabledSeriesSources, buildSeriesUrl } = require('./sources');
 require('dotenv').config();
 
 const app = express();
 app.use(express.json());
 app.use(express.static(__dirname));
-
-const sourcesConfig = JSON.parse(fs.readFileSync(path.join(__dirname, 'sources.json'), 'utf8'));
 
 const pool = mysql.createPool({
   host: process.env.TIDB_HOST,
@@ -63,7 +62,6 @@ app.get('/api/start-sync', async (req, res) => {
 app.get('/api/sync-status', (req, res) => res.json(syncState));
 
 async function runSync() {
-  // Changed sort_by to fetch from NEWEST to OLDEST
   const categories = [
     { name: 'movies', url: `${TMDB_BASE}/discover/movie?api_key=${TMDB_KEY}&sort_by=primary_release_date.desc&page=` },
     { name: 'series', url: `${TMDB_BASE}/discover/tv?api_key=${TMDB_KEY}&sort_by=first_air_date.desc&page=` },
@@ -159,20 +157,36 @@ app.get('/api/movie/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Database error' }); }
 });
 
-// --- Perfected Search System ---
+// --- Get Seasons & Episodes for Series/Anime ---
+app.get('/api/seasons/:id', async (req, res) => {
+  try {
+    const r = await axios.get(`${TMDB_BASE}/tv/${req.params.id}?api_key=${TMDB_KEY}`);
+    // Filter out specials (season 0)
+    const seasons = r.data.seasons.filter(s => s.season_number > 0).map(s => ({
+      id: s.id,
+      name: s.name,
+      season_number: s.season_number,
+      episode_count: s.episode_count,
+      poster: s.poster_path ? `${TMDB_IMG}${s.poster_path}` : ''
+    }));
+    res.json(seasons);
+  } catch (e) { res.status(500).json([]); }
+});
+
+// --- Deep Database Search (Title, Genre, or Year) ---
 app.get('/api/search', async (req, res) => {
   const q = req.query.q;
   if (!q) return res.json([]);
   try {
     const query = `
-      SELECT 'films' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM movies_cache WHERE title LIKE ?
+      SELECT 'films' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM movies_cache WHERE title LIKE ? OR genre LIKE ? OR release_date LIKE ?
       UNION ALL
-      SELECT 'series' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM series_cache WHERE title LIKE ?
+      SELECT 'series' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM series_cache WHERE title LIKE ? OR genre LIKE ? OR release_date LIKE ?
       UNION ALL
-      SELECT 'anime' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM anime_cache WHERE title LIKE ?
-      LIMIT 20
+      SELECT 'anime' as type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview FROM anime_cache WHERE title LIKE ? OR genre LIKE ? OR release_date LIKE ?
+      LIMIT 24
     `;
-    const [rows] = await pool.query(query, [`%${q}%`, `%${q}%`, `%${q}%`]);
+    const [rows] = await pool.query(query, [`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`]);
     res.json(rows);
   } catch (err) { res.status(500).json([]); }
 });
@@ -186,9 +200,11 @@ app.get('/api/categories', (req, res) => {
   ]);
 });
 
-// --- Advanced Deep Search + API Sources Engine ---
+// --- Advanced Dynamic Sources Engine ---
 app.get('/api/sources', async (req, res) => {
   const movieId = req.query.id;
+  const season = req.query.s || 1;
+  const episode = req.query.e || 1;
   let mediaType = 'movie';
 
   try {
@@ -229,7 +245,7 @@ app.get('/api/sources', async (req, res) => {
   // SEARCH ENGINE 1: 2Embed.cc API
   if (imdbId) {
     searchPromises.push(
-      axios.get(`https://www.2embed.cc/ajax/embed/list?id=${imdbId}${isTV ? '&s=1&e=1' : ''}`, {
+      axios.get(`https://www.2embed.cc/ajax/embed/list?id=${imdbId}${isTV ? `&s=${season}&e=${episode}` : ''}`, {
         headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.2embed.cc/' },
         timeout: 5000
       }).then(response => {
@@ -256,23 +272,9 @@ app.get('/api/sources', async (req, res) => {
     }).catch(() => {})
   );
 
-  // SEARCH ENGINE 3: VidSrc.xyz API
+  // SEARCH ENGINE 3: SmashyStream API
   searchPromises.push(
-    axios.get(`https://vidsrc.xyz/ajax/embed/list?id=${movieId}`, {
-      headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://vidsrc.xyz/' },
-      timeout: 5000
-    }).then(response => {
-      const $ = cheerio.load(response.data);
-      $('.server').each((i, el) => {
-        const url = $(el).attr('data-embed') || '';
-        if (url) rawSources.push({ name: `VidSrc.xyz - ${getCleanName(url)}`, url: url, status: "online" });
-      });
-    }).catch(() => {})
-  );
-
-  // SEARCH ENGINE 4: SmashyStream API
-  searchPromises.push(
-    axios.get(`https://embed.smashystream.com/api/fetch/${tmdbEndpoint}?id=${movieId}${isTV ? '&s=1&e=1' : ''}`, {
+    axios.get(`https://embed.smashystream.com/api/fetch/${tmdbEndpoint}?id=${movieId}${isTV ? `&s=${season}&e=${episode}` : ''}`, {
       headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://embed.smashystream.com/' },
       timeout: 5000
     }).then(response => {
@@ -287,67 +289,25 @@ app.get('/api/sources', async (req, res) => {
     }).catch(() => {})
   );
 
-  // Wait for all search engines, but force a maximum 6-second limit so the frontend never hangs
   await Promise.race([
     Promise.all(searchPromises),
     new Promise(resolve => setTimeout(resolve, 6000))
   ]);
 
-  // Add Static Meta-Aggregators from sources.json
-  sourcesConfig.forEach(src => {
-    let url = '';
-    // Use IMDb ID if we have it, otherwise fallback to TMDB ID
-    const idToUse = imdbId || movieId;
-
-    if (src.name === 'PrimeSrc') {
-      // PrimeSrc explicitly supports TMDB IDs
-      if (isTV) url = `https://primesrc.me/embed/tv?tmdb=${movieId}&season=1&episode=1`;
-      else url = `https://primesrc.me/embed/movie?tmdb=${movieId}`;
-    } 
-    else if (src.name === 'SmashyStream') {
-      // SmashyStream explicitly supports TMDB IDs
-      url = `https://embed.smashystream.com/playere.php?tmdb=${movieId}`;
-    }
-    else if (src.name === 'SuperEmbed') {
-      // SuperEmbed uses TMDB for movies
-      if (isTV) url = `https://se.bingetime.eu.org/embedtv/${movieId}/1/1`;
-      else url = `https://se.bingetime.eu.org/embedmovie/${movieId}`;
-    }
-    else if (src.name === 'VidSrc') {
-      if (isTV) url = `https://vidsrc.to/embed/tv/${idToUse}/1/1`;
-      else url = `https://vidsrc.to/embed/movie/${idToUse}`;
-    }
-    else if (src.name === 'VidSrc.xyz') {
-      if (isTV) url = `https://vidsrc.xyz/embed/tv/${idToUse}/1/1`;
-      else url = `https://vidsrc.xyz/embed/movie/${idToUse}`;
-    }
-    else if (src.name === '2Embed.cc') {
-      if (isTV) url = `https://www.2embed.cc/embedtv/${idToUse}&s=1&e=1`;
-      else url = `https://www.2embed.cc/embed/${idToUse}`;
-    }
-    else if (src.name === '2Embed.to') {
-      if (isTV) url = `https://www.2embed.to/embedtvfull/${idToUse}&s=1&e=1`;
-      else url = `https://www.2embed.to/embed/${idToUse}`;
-    }
-    else if (src.name === 'MultiEmbed') {
-      if (isTV) url = `https://multiembed.mov/?video_id=${idToUse}&s=1&e=1`;
-      else url = `https://multiembed.mov/?video_id=${idToUse}`;
-    }
-    else if (src.name === 'Embed.su') {
-      if (isTV) url = `https://embed.su/embed/tv/${idToUse}/1/1`;
-      else url = `https://embed.su/embed/movie/${idToUse}`;
-    }
-    else if (src.name === 'AutoEmbed') {
-      if (isTV) url = `https://autoembed.cc/embed/tv/${idToUse}/1/1`;
-      else url = `https://autoembed.cc/embed/movie/${idToUse}`;
-    }
-    else {
-      // Fallback
-      url = `${src.base_url}${idToUse}`;
-    }
-    
-    rawSources.push({ name: src.name, url: url, status: "online" });
-  });
+  // Add Static Sources from sources.js
+  if (isTV) {
+    const seriesSources = getEnabledSeriesSources();
+    seriesSources.forEach(src => {
+      const url = buildSeriesUrl(src.id, movieId, season, episode);
+      rawSources.push({ name: src.name, url: url, status: "online" });
+    });
+  } else {
+    const movieSources = getEnabledMovieSources();
+    movieSources.forEach(src => {
+      const url = buildMovieUrl(src.id, movieId);
+      rawSources.push({ name: src.name, url: url, status: "online" });
+    });
+  }
 
   // DEDUPLICATION FILTER
   const dynamicSources = [];
@@ -366,4 +326,12 @@ app.get('/api/sources', async (req, res) => {
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Z-Stream server running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Z-Stream server running on port ${PORT}`);
+  
+  // 14-Minute Ping to keep Render alive 24/7
+  const URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+  setInterval(() => {
+    axios.get(URL).then(() => console.log('Self-ping successful')).catch(() => {});
+  }, 14 * 60 * 1000);
+});
