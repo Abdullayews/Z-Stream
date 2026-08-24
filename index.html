@@ -339,7 +339,16 @@ document.addEventListener('click', (e) => { if (!e.target.closest('.searchbox'))
 // --- APIS ---
 async function fetchMovies() { try { const r = await fetch(`${API_BASE}/movies`); return r.ok ? r.json() : []; } catch (e) { return []; } }
 async function fetchCats() { try { const r = await fetch(`${API_BASE}/categories`); return r.ok ? r.json() : [{id:'all', name:'All'}]; } catch (e) { return [{id:'all', name:'All'}]; } }
-async function fetchSources(id) { try { const r = await fetch(`${API_BASE}/sources?id=${id}`); return r.ok ? r.json() : []; } catch (e) { return []; } }
+async function fetchSources(id) { 
+  try { 
+    const r = await fetch(`${API_BASE}/sources?id=${id}`); 
+    if (!r.ok) return [];
+    const data = await r.json();
+    return Array.isArray(data) ? data : [];
+  } catch (e) { 
+    return []; 
+  } 
+}
 
 // --- HERO SLIDER LOGIC ---
 let heroItems = [], heroIndex = 0, heroInterval;
