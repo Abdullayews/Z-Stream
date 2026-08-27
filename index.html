@@ -1169,16 +1169,22 @@ function loadTabbar(){
     b.addEventListener('click', () => switchView(b.dataset.view)));
 }
 
-/* ═══════════ Sync panel ═══════════ */
+/* ═══════════ Sync panel (always-on sync) ═══════════ */
+let syncIsRunning = false;
 function initSyncPanel(){
   $('syncPanel').style.display = 'block';
-  $('syncBtn').addEventListener('click', startSync);
-  checkSyncStatus();
-}
-async function startSync(){
-  $('syncBtn').disabled = true;
-  $('syncBtn').innerText = 'Starting…';
-  try{ await fetch(API_BASE + '/start-sync'); }catch(e){}
+  $('syncBtn').addEventListener('click', async () => {
+    const btn = $('syncBtn');
+    btn.disabled = true;
+    if (syncIsRunning){
+      btn.innerText = 'Stopping…';
+      try{ await fetch(API_BASE + '/stop-sync', { method: 'POST' }); }catch(e){}
+    } else {
+      btn.innerText = 'Starting…';
+      try{ await fetch(API_BASE + '/start-sync'); }catch(e){}
+    }
+    checkSyncStatus();
+  });
   checkSyncStatus();
 }
 let syncInterval = null;
@@ -1189,12 +1195,21 @@ async function checkSyncStatus(){
       const r = await fetch(API_BASE + '/sync-status');
       const data = await r.json();
       const btn = $('syncBtn'), txt = $('syncStatusText');
+      syncIsRunning = !!data.isSyncing;
       if (data.isSyncing){
-        txt.innerHTML = 'Status: Syncing <b>' + esc(data.category) + '</b><br>Page: ' + data.currentPage + '<br>Cached Items: ' + data.totalItems;
-        btn.disabled = true; btn.innerText = 'Syncing…';
+        const yr = data.year ? ' · ' + data.year : '';
+        const pg = data.page || data.currentPage || 0;
+        txt.innerHTML = 'Status: Syncing <b>' + esc(data.category) + esc(yr) + '</b><br>Page: ' + pg +
+          '<br>DB Items: ' + data.totalItems +
+          '<br>Auto: every ' + (data.autoIntervalHours || 6) + 'h';
+        btn.disabled = false; btn.innerText = 'Stop Sync';
       } else {
-        txt.innerHTML = 'Status: Idle / Complete<br>Cached Items: ' + data.totalItems;
-        btn.disabled = false; btn.innerText = 'Start Caching TMDB';
+        const last = data.lastRunAt ? new Date(data.lastRunAt).toLocaleString() : 'never';
+        const next = data.nextRunAt ? new Date(data.nextRunAt).toLocaleTimeString() : '—';
+        txt.innerHTML = 'Status: Idle · last run: ' + esc(last) +
+          '<br>DB Items: ' + data.totalItems +
+          '<br>Next auto-sync: ' + esc(next);
+        btn.disabled = false; btn.innerText = 'Start Full Sync';
       }
     }catch(e){}
   }, 2000);
