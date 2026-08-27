@@ -19,7 +19,6 @@
 html{scroll-behavior:smooth}
 body{font-family:'Inter',sans-serif;background:var(--void);color:var(--text);min-height:100vh;overflow-x:hidden;-webkit-font-smoothing:antialiased}
 
-/* ── Atmosphere ── */
 .atmosphere{position:fixed;inset:0;z-index:0;pointer-events:none;background:
   radial-gradient(ellipse 80% 60% at 12% 45%, rgba(229,9,20,.13) 0%, transparent 55%),
   radial-gradient(ellipse 50% 40% at 88% 15%, rgba(255,107,53,.06) 0%, transparent 55%)}
@@ -82,8 +81,7 @@ body{font-family:'Inter',sans-serif;background:var(--void);color:var(--text);min
 .hero.visible{display:flex}
 .hero-backdrop{position:absolute;inset:-4%;z-index:-2;opacity:.58;background-size:cover;background-position:center 18%;
   filter:saturate(.85) contrast(1.12) brightness(.85);
-  mask-image:linear-gradient(0deg,#000 22%,transparent 96%);-webkit-mask-image:linear-gradient(0deg,#000 22%,transparent 96%);
-  transition:opacity 1s ease}
+  mask-image:linear-gradient(0deg,#000 22%,transparent 96%);-webkit-mask-image:linear-gradient(0deg,#000 22%,transparent 96%);transition:opacity 1s ease}
 .hero-backdrop.fade{opacity:0}
 .hero::after{content:'';position:absolute;inset:auto 0 0 0;height:68%;z-index:-1;
   background:linear-gradient(0deg,#000 2%,rgba(0,0,0,.55) 46%,transparent 100%)}
@@ -195,16 +193,16 @@ body{font-family:'Inter',sans-serif;background:var(--void);color:var(--text);min
 .sub-head{font-family:'Orbitron';font-size:13px;font-weight:700;letter-spacing:2px;text-transform:uppercase;display:flex;align-items:center;gap:10px;color:var(--fog)}
 .sub-head::before{content:'';width:4px;height:18px;background:var(--lava);border-radius:2px;box-shadow:0 0 12px var(--lava)}
 
-/* ── Player stage (popup target zone) ── */
+/* ── Player slot (frame-in-place / companion popup fallback) ── */
 .vframe{position:relative;width:min(100%,calc((100vh - 120px) * 16 / 9));max-height:calc(100vh - 120px);aspect-ratio:16/9;margin:0 auto;background:#000;border-radius:14px;overflow:hidden;border:1px solid var(--border);box-shadow:0 20px 50px #000c}
 @supports (height:100dvh){.vframe{width:min(100%,calc((100dvh - 120px) * 16 / 9));max-height:calc(100dvh - 120px)}}
-.vplaceholder{position:absolute;inset:0;background:radial-gradient(ellipse at center,rgba(229,9,20,.06),transparent 70%),#000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;color:var(--ash);padding:24px}
+.vframe iframe{width:100%;height:100%;border:0;display:block;background:#000}
+.vplaceholder{position:absolute;inset:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;color:var(--ash);padding:24px}
 .vplaceholder p{font-size:14px;max-width:440px;line-height:1.7}
-.vplaceholder .big-icon{font-size:38px;color:var(--lava);text-shadow:0 0 24px rgba(229,9,20,.6);animation:pulseDot 2s infinite}
-.vplaceholder .server-name{color:var(--flame);font-weight:700}
+.vplaceholder .big{font-size:16px;font-weight:700;color:var(--fog)}
+.vplaceholder a{color:var(--flame)}
 .spinner{width:42px;height:42px;border:3px solid rgba(229,9,20,.2);border-top-color:var(--lava);border-radius:50%;animation:spin .9s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
-.vstage-actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
 .server-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}
 .server-btn{padding:13px 10px;background:rgba(20,1,2,.55);border:1px solid var(--border);border-radius:11px;color:var(--fog);font-size:13.5px;font-weight:600;cursor:pointer;transition:.25s;text-align:center}
 .server-btn:hover{background:rgba(229,9,20,.14);color:#fff;transform:translateY(-2px);border-color:var(--border-hover)}
@@ -353,14 +351,11 @@ body{font-family:'Inter',sans-serif;background:var(--void);color:var(--text);min
       </div>
     </div>
 
-    <!-- Player stage: popup window opens exactly on top of this area -->
+    <!-- Player slot: iframe when allowed, companion-popup notice when blocked -->
     <div class="watch-section" id="playerSection">
       <div class="sub-head">Watch Now</div>
       <div class="vframe" id="vframe">
-        <div class="vplaceholder" id="vplaceholder">
-          <div class="big-icon">▶</div>
-          <p>Select a server below — playback opens in a window positioned right here.</p>
-        </div>
+        <div class="vplaceholder" id="vplaceholder"><p>Select a server below to start watching.</p></div>
       </div>
       <div class="server-grid" id="serverGrid"></div>
     </div>
@@ -405,12 +400,7 @@ const fmtRating = r => Number(r || 0).toFixed(1);
 const PLACEHOLDER = "data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 450'%3E%3Crect width='300' height='450' fill='%23150203'/%3E%3Ctext x='150' y='230' fill='%235a2226' font-family='sans-serif' font-size='16' text-anchor='middle'%3ENo Poster%3C/text%3E%3C/svg%3E";
 function imgFallback(img){ img.onerror = null; img.src = PLACEHOLDER; }
 
-/* Type helpers — TMDB's split: movies | series (TMDB "tv" → "series").
-   Legacy 'anime'/'films' values from old history entries still work. */
-const isSeriesType = t => t === 'series' || t === 'anime' || t === 'tv';
-const typeLabel = t => isSeriesType(t) ? 'Series' : 'Movie';
-
-/* ───────────── Storage ───────────── */
+/* ═══════════ Storage (favorites / history with progress) ═══════════ */
 const Store = {
   get(k){ try{ return JSON.parse(localStorage.getItem('zs_'+k)) || []; }catch{ return []; } },
   set(k,v){ localStorage.setItem('zs_'+k, JSON.stringify(v)); },
@@ -440,7 +430,7 @@ function fmtMinutes(m){
   return h + 'h ' + mm + 'm watched';
 }
 
-/* ───────────── Auth ───────────── */
+/* ═══════════ Auth ═══════════ */
 function checkAuth(){
   if (localStorage.getItem('zs_auth') === 'true'){
     startApp();
@@ -456,8 +446,8 @@ async function probeHealth(){
     if (!h.db){
       $('loginStatus').textContent = h.dbError || 'Database unreachable — check /api/health';
       $('loginStatus').style.display = 'block';
-    } else if (h.tables && h.tables.users === 'MISSING'){
-      $('loginStatus').textContent = 'No users yet — admin/admin will be created on first login.';
+    } else if (h.tables && (h.tables.movies_cache === 'MISSING' || h.tables.series_cache === 'MISSING')){
+      $('loginStatus').textContent = 'Cache tables missing — run a sync after logging in.';
       $('loginStatus').style.display = 'block';
     }
   }catch(e){}
@@ -481,13 +471,9 @@ async function doLogin(){
       localStorage.setItem('zs_auth','true');
       return startApp();
     }
-    if (data.error === 'db_down'){
-      err.textContent = 'Database problem: ' + (data.message || 'see /api/health');
-    } else if (data.error === 'rate_limited'){
-      err.textContent = data.message || 'Too many attempts. Wait a few minutes.';
-    } else {
-      err.textContent = data.message || 'Invalid username or password.';
-    }
+    if (data.error === 'db_down') err.textContent = 'Database problem: ' + (data.message || 'see /api/health');
+    else if (data.error === 'rate_limited') err.textContent = data.message || 'Too many attempts. Wait a few minutes.';
+    else err.textContent = data.message || 'Invalid username or password.';
   }catch(e){
     clearTimeout(to);
     err.textContent = e.name === 'AbortError'
@@ -506,11 +492,11 @@ async function doLogin(){
   location.reload();
 });
 
-/* ───────────── State ───────────── */
+/* ═══════════ State ═══════════ */
 let view = 'home', cat = 'all', allMovies = [], currentMovie = null;
 let heroItems = [], heroIndex = 0, heroInterval = null;
 let activeSeason = 1, activeEpisode = 1, seasons = [], dynamicSources = [], preferredSource = null;
-let watchTimer = null;
+let watchTimer = null, lastPopupUrl = null;
 
 async function startApp(){
   $('loginPortal').style.display = 'none';
@@ -523,7 +509,7 @@ async function startApp(){
   renderView();
 }
 
-/* ───────────── API wrapper ───────────── */
+/* ═══════════ API ═══════════ */
 async function api(path){
   try{
     const r = await fetch(API_BASE + path);
@@ -535,7 +521,7 @@ async function fetchMovies(){
   return Array.isArray(d) ? d : [];
 }
 
-/* ───────────── Views ───────────── */
+/* ═══════════ Views (Home / Movies / Series / Favorites / History) ═══════════ */
 function switchView(v){
   view = v; stopHero();
   document.querySelectorAll('.navlink, .tabbar button').forEach(b =>
@@ -556,20 +542,18 @@ function renderView(){
     f.length ? renderSection('Favorites', f) : showEmpty('No Favorites Yet','Tap the heart on any card to keep it here.');
   } else if (view === 'history'){
     renderHistoryView();
-  } else {
-    // 'movies' | 'series' — straight from TMDB's own split
-    const f = allMovies.filter(m =>
-      view === 'series' ? isSeriesType(m.type) : !isSeriesType(m.type));
-    f.length ? renderSection(typeLabel(view), f.slice(0,20))
-      : showEmpty('Empty', 'No ' + typeLabel(view) + ' cached yet — run a sync.');
+  } else { // 'movies' | 'series'
+    const f = allMovies.filter(m => m.type === view);
+    f.length ? renderSection(view === 'movies' ? 'Movies' : 'Series', f.slice(0, 100))
+      : showEmpty('Empty', 'No ' + view + ' cached yet — run a sync.');
   }
 }
 function renderHistoryView(){
   const h = Store.get('hist');
-  if (!h.length) return showEmpty('Nothing Watched Yet','Titles you play will appear here with your latest episode and watch time.');
+  if (!h.length) return showEmpty('Nothing Watched Yet','Titles you open will appear here with your latest episode and watch time.');
   hideEmpty();
   $('sections').innerHTML = '';
-  const inProgress = h.filter(x => x.minutesWatched > 0);
+  const inProgress = h.filter(x => x.minutesWatched > 0 && progressPct(x) < 95);
   if (inProgress.length){
     $('sections').insertAdjacentHTML('beforeend',
       '<section aria-label="Continue watching"><div class="sec-head"><h2 class="sec-title">Continue Watching</h2></div>' +
@@ -601,8 +585,7 @@ function renderSections(movies){
 
   if (cat === 'all'){
     [['Movies','movies'],['Series','series']].forEach(pair => {
-      const items = movies.filter(m =>
-        pair[1] === 'series' ? isSeriesType(m.type) : !isSeriesType(m.type)).slice(0,20);
+      const items = movies.filter(m => m.type === pair[1]).slice(0,20);
       if (items.length) renderSection(pair[0], items);
     });
   } else {
@@ -612,7 +595,7 @@ function renderSections(movies){
   }
 }
 
-/* ───────────── Cards ───────────── */
+/* ═══════════ Cards ═══════════ */
 function skel(n){
   n = n || 20;
   let out = '';
@@ -622,7 +605,7 @@ function skel(n){
 function cardHTML(m){
   const fav = Store.has('fav', m.id);
   const hist = Store.find('hist', m.id);
-  const isTV = isSeriesType(m.type);
+  const isTV = m.type === 'series';
   const pct = progressPct(hist);
 
   const chip = (isTV && hist && hist.season)
@@ -666,7 +649,6 @@ function renderSection(title, movies){
   revealCards();
 }
 
-/* Delegated card events */
 document.addEventListener('click', e => {
   const favBtn = e.target.closest('[data-fav]');
   if (favBtn){
@@ -685,7 +667,7 @@ document.addEventListener('keydown', e => {
   }
 });
 
-/* ───────────── Hero ───────────── */
+/* ═══════════ Hero ═══════════ */
 function initHero(items){
   const withBd = items.filter(m => m.backdrop);
   heroItems = (withBd.length >= 3 ? withBd : items)
@@ -749,7 +731,7 @@ function refreshFavButtons(id){
   });
 }
 
-/* ───────────── Search ───────────── */
+/* ═══════════ Search ═══════════ */
 let searchTimer = null, searchToken = 0;
 function initSearch(){
   const input = $('searchInput'), dd = $('searchDropdown');
@@ -786,12 +768,13 @@ function initSearch(){
         dd.innerHTML = '<div class="search-item"><div class="search-item-title">No results found</div></div>';
         return;
       }
-      dd.innerHTML = res.map(m =>
-        '<button class="search-item" role="option" data-id="' + m.id + '">' +
+      dd.innerHTML = res.map(m => {
+        const label = m.type === 'series' ? 'Series' : 'Movie';
+        return '<button class="search-item" role="option" data-id="' + m.id + '">' +
           '<img src="' + (esc(m.poster) || PLACEHOLDER) + '" alt="" onerror="imgFallback(this)">' +
           '<div style="min-width:0;"><div class="search-item-title">' + esc(m.title) + '</div>' +
-          '<div class="search-item-meta"><span class="type-tag">' + typeLabel(m.type) + '</span>' + esc(m.release_date||'') + ' · ★ ' + fmtRating(m.rating) + '</div></div>' +
-        '</button>').join('');
+          '<div class="search-item-meta"><span class="type-tag">' + label + '</span>' + esc(m.release_date||'') + ' · ★ ' + fmtRating(m.rating) + '</div></div></button>';
+      }).join('');
       dd.querySelectorAll('.search-item[data-id]').forEach(el =>
         el.addEventListener('click', () => { openDetail(Number(el.dataset.id)); input.value=''; closeDD(); }));
     }catch(err){
@@ -801,7 +784,7 @@ function initSearch(){
   }
 }
 
-/* ───────────── Detail portal ───────────── */
+/* ═══════════ Detail portal ═══════════ */
 async function openDetail(id){
   const local = allMovies.find(m => m.id === id)
     || Store.get('fav').find(m => m.id === id)
@@ -817,7 +800,8 @@ async function openDetail(id){
   $('watchNote').textContent = '';
   $('serverGrid').innerHTML = '';
   $('episodesSection').style.display = 'none';
-  showStageIdle();
+  showVideoPlaceholder('Select a server below to start watching.');
+  const old = $('uvideo'); if (old) old.remove();
 
   $('portal').classList.add('on');
   document.body.style.overflow = 'hidden';
@@ -827,19 +811,21 @@ async function openDetail(id){
   if (full){
     currentMovie = full;
     renderDetail(full);
+    // ← HISTORY FIX: record the open immediately so "last watched" always appears
+    recordProgress({});
     renderResume(Store.find('hist', id));
   } else {
     $('serverGrid').innerHTML = '<p class="src-note">Could not load details. Close and try again.</p>';
   }
 
-  if (full && isSeriesType(full.type)){
+  if (full && full.type === 'series'){
     $('episodesSection').style.display = 'block';
     activeSeason = Number(local && local.season) || 1;
     activeEpisode = Number(local && local.episode) || 1;
     seasons = await api('/seasons/' + full.id) || [];
     renderSeasons();
   }
-  loadServers();
+  loadSources();
   renderProviders(full);
   renderCast(full);
 }
@@ -850,8 +836,9 @@ function renderDetail(m){
   const p = $('detailPoster');
   p.src = m.poster || PLACEHOLDER;
   p.onerror = function(){ imgFallback(this); };
+  const typeLabel = m.type === 'series' ? 'Series' : 'Movie';
   $('detailMeta').innerHTML =
-    '<span class="type-big">' + typeLabel(m.type) + '</span>' +
+    '<span class="type-big">' + typeLabel + '</span>' +
     '<span class="star">★ ' + fmtRating(m.rating) + '</span>' +
     '<span>' + esc(m.release_date || 'N/A') + '</span>' +
     '<span>' + esc(m.genre || '') + '</span>';
@@ -872,19 +859,19 @@ function renderFavBtn(){
 });
  $('closeBtn').addEventListener('click', closePortal);
 
-/* Resume banner */
+/* Resume banner (movies with progress AND series episodes) */
 function renderResume(entry){
   const box = $('resumeBox');
-  if (!entry || (!entry.season && !entry.minutesWatched)){ box.innerHTML = ''; return; }
+  if (!entry || (!entry.season && !(entry.minutesWatched > 0))){ box.innerHTML = ''; return; }
   const pct = progressPct(entry);
   const head = entry.season
-    ? 'S' + entry.season + ' · E' + (entry.episode || 1)
-    : 'Movie';
+    ? '<span style="font-weight:700;">S' + entry.season + ' · E' + (entry.episode || 1) + '</span>'
+    : '<span style="font-weight:700;">Resume</span>';
   box.innerHTML =
     '<div class="watch-section" style="padding:16px 20px;">' +
       '<div class="sub-head" style="font-size:11px;">Resume</div>' +
       '<div style="display:flex;justify-content:space-between;font-size:13px;color:var(--fog);flex-wrap:wrap;gap:8px;">' +
-        '<span style="font-weight:700;">' + head + '</span>' +
+        head +
         '<span style="color:var(--ash);">' + esc(fmtMinutes(entry.minutesWatched)) +
         (entry.runtime ? ' of ~' + entry.runtime + ' min' : '') + '</span>' +
       '</div>' +
@@ -896,179 +883,50 @@ function renderResume(entry){
     '</div>';
 }
 
-/* ───────────── History recording ───────────── */
-function recordWatchStart(){
-  if (!currentMovie || !currentMovie.id) return;
-  if (currentMovie.title === 'Loading…') return;
-
-  const isTV = isSeriesType(currentMovie.type);
+/* Record watch progress — creates history entries even for movies */
+function recordProgress(extra){
+  if (!currentMovie || !currentMovie.title || currentMovie.title === 'Loading…') return;
   const prev = Store.find('hist', currentMovie.id) || {};
-  const newSeason   = isTV ? activeSeason   : null;
-  const newEpisode  = isTV ? activeEpisode  : null;
-  const episodeChanged = isTV && (prev.season !== newSeason || prev.episode !== newEpisode);
-
   Store.add('hist', Object.assign({}, prev, currentMovie, {
-    season: newSeason,
-    episode: newEpisode,
-    minutesWatched: episodeChanged ? 0 : (prev.minutesWatched || 0),
-    runtime: prev.runtime || currentMovie.runtime || (isTV ? 45 : 100),
+    season: extra.season !== undefined ? extra.season : prev.season,
+    episode: extra.episode !== undefined ? extra.episode : prev.episode,
+    minutesWatched: extra.minutesWatched !== undefined ? extra.minutesWatched : (prev.minutesWatched || 0),
+    runtime: extra.runtime || currentMovie.runtime || prev.runtime,
     ts: Date.now()
   }));
-  updateCounts();
+  refreshFavButtons(currentMovie.id);
 }
 
+/* Watch-time ticker — 1 min while a server plays; creates entry if missing */
 function startWatchTimer(){
   stopWatchTimer();
   watchTimer = setInterval(() => {
     if (!currentMovie || !currentMovie.id) return;
-    if (playerWin && playerWin.closed) return;
     const h = Store.find('hist', currentMovie.id);
     if (h){
       h.minutesWatched = (h.minutesWatched || 0) + 1;
       h.ts = Date.now();
       Store.add('hist', h);
+    } else {
+      recordProgress({ minutesWatched: 1 });
     }
   }, 60000);
 }
 function stopWatchTimer(){ clearInterval(watchTimer); watchTimer = null; }
 
-/* ═══════════════════════════════════════════════════════════
-   POPUP PLAYER — window.open() positioned EXACTLY over .vframe
-   ═══════════════════════════════════════════════════════════ */
-let playerWin = null;
-let playerPoll = null;
-const PLAYER_WINDOW_NAME = 'zsplayer';
-
-function computeStageRect(){
-  const rect = $('vframe').getBoundingClientRect();
-  const winX = (window.screenX !== undefined) ? window.screenX : (window.screenLeft || 0);
-  const winY = (window.screenY !== undefined) ? window.screenY : (window.screenTop || 0);
-  const chromeTop = Math.max(0, window.outerHeight - window.innerHeight);
-
-  let left  = Math.round(winX + rect.left);
-  let top   = Math.round(winY + chromeTop + rect.top);
-  let width = Math.max(320, Math.round(rect.width));
-  let height = Math.max(240, Math.round(rect.height));
-
-  const availW = window.screen.availWidth  || window.screen.width  || width;
-  const availH = window.screen.availHeight || window.screen.height || height;
-  if (left + width  > availW) left = Math.max(0, availW - width);
-  if (top  + height > availH) top  = Math.max(0, availH - height);
-
-  return { left, top, width, height };
-}
-
-function playInPopup(url, serverName){
-  const pos = computeStageRect();
-  const features =
-    'popup=yes,width=' + pos.width + ',height=' + pos.height +
-    ',left=' + pos.left + ',top=' + pos.top;
-
-  let win = null;
-  try {
-    win = window.open(url, PLAYER_WINDOW_NAME, features);
-  } catch (e) { win = null; }
-
-  if (!win){
-    showStageBlocked(serverName, url);
-    return false;
-  }
-
-  playerWin = win;
-  try { win.moveTo(pos.left, pos.top); } catch (e) {}
-  try { win.resizeTo(pos.width, pos.height); } catch (e) {}
-  try { win.focus(); } catch (e) {}
-
-  showStagePlaying(serverName);
-  startPopupPoll();
-  recordWatchStart();
-  startWatchTimer();
-  renderResume(Store.find('hist', currentMovie.id));
-  return true;
-}
-
-function startPopupPoll(){
-  clearInterval(playerPoll);
-  playerPoll = setInterval(() => {
-    if (playerWin && playerWin.closed){
-      clearInterval(playerPoll);
-      playerWin = null;
-      stopWatchTimer();
-      showStageClosed();
-    }
-  }, 800);
-}
-
-function closePlayerWindow(){
-  clearInterval(playerPoll);
-  if (playerWin && !playerWin.closed){
-    try { playerWin.close(); } catch (e) {}
-  }
-  playerWin = null;
-}
-
-/* ── Stage states ── */
-function stageHTML(inner){
-  const ph = $('vplaceholder');
-  ph.style.display = 'flex';
-  ph.innerHTML = inner;
-  return ph;
-}
-function showStageIdle(){
-  stageHTML('<div class="big-icon">▶</div>' +
-    '<p>Select a server below — playback opens in a window positioned right here.</p>');
-}
-function showStageLoading(msg){
-  stageHTML('<div class="spinner"></div><p>' + esc(msg) + '</p>');
-}
-function showStagePlaying(serverName){
-  const ph = stageHTML(
-    '<div class="big-icon">▶</div>' +
-    '<p>Now playing on <span class="server-name">' + esc(serverName) + '</span> in the external window.</p>' +
-    '<div class="vstage-actions">' +
-      '<button class="btn btn-ghost" id="focusPlayerBtn">Focus player</button>' +
-      '<button class="btn btn-ghost" id="detachPlayerBtn">Open in browser tab</button>' +
-    '</div>');
-  const src = dynamicSources.find(s => s.name === serverName);
-  ph.querySelector('#focusPlayerBtn').addEventListener('click', () => {
-    if (playerWin && !playerWin.closed){ try { playerWin.focus(); } catch (e) {} }
-    else if (src) { playInPopup(src.url, serverName); }
-  });
-  ph.querySelector('#detachPlayerBtn').addEventListener('click', () => {
-    if (src) window.open(src.url, '_blank');
-  });
-}
-function showStageBlocked(serverName, url){
-  const ph = stageHTML(
-    '<p>⚠️ The popup was blocked by your browser.</p>' +
-    '<p>Click below to open <span class="server-name">' + esc(serverName) + '</span> manually:</p>' +
-    '<div class="vstage-actions">' +
-      '<a class="btn btn-lava" href="' + esc(url) + '" target="' + PLAYER_WINDOW_NAME + '" rel="noopener" id="manualOpenBtn">Open ' + esc(serverName) + '</a>' +
-    '</div>');
-  ph.querySelector('#manualOpenBtn').addEventListener('click', () => {
-    recordWatchStart();
-    startWatchTimer();
-    playerWin = null;
-    showStagePlaying(serverName);
-  });
-}
-function showStageClosed(){
-  stageHTML('<p>Playback window closed.</p><p>Pick a server below to watch again.</p>');
-}
-
-/* ───────────── Servers ───────────── */
-async function loadServers(){
+/* ═══════════ Player: frame-in-place + popup fallback ═══════════ */
+async function loadSources(){
   if (!currentMovie || !currentMovie.id) return;
   const grid = $('serverGrid');
   grid.innerHTML = '<p class="src-note">Loading servers for S' + activeSeason + 'E' + activeEpisode + '…</p>';
-  showStageLoading('Loading servers for S' + activeSeason + 'E' + activeEpisode + '…');
+  showVideoLoading('Loading servers for S' + activeSeason + 'E' + activeEpisode + '…');
 
   dynamicSources = await api('/sources?id=' + currentMovie.id + '&s=' + activeSeason + '&e=' + activeEpisode + '&type=' + encodeURIComponent(currentMovie.type || '')) || [];
   if (!Array.isArray(dynamicSources)) dynamicSources = [];
 
   if (!dynamicSources.length){
     grid.innerHTML = '<p class="src-note">No servers available for this title.</p>';
-    showStageIdle();
+    showVideoPlaceholder('No servers available. Try another title.');
     return;
   }
 
@@ -1081,24 +939,104 @@ async function loadServers(){
   if (btns[idx]) selSrc(btns[idx], dynamicSources[idx].name);
 }
 
-function selSrc(btn, name){
+async function selSrc(btn, name){
   if (!btn) return;
   document.querySelectorAll('.server-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   preferredSource = name;
 
   const source = dynamicSources.find(s => s.name === name);
-  if (!source || !source.url){
-    showStageIdle();
-    toast('This server is unavailable.');
-    return;
-  }
+  if (!source || !source.url){ showVideoPlaceholder('This server is unavailable.'); return; }
 
-  showStageLoading('Opening ' + name + '…');
-  playInPopup(source.url, name);
+  showVideoLoading('Checking ' + name + '…');
+
+  // Server-side X-Frame-Options / CSP frame-ancestors check (cached, fast)
+  let frameable = true;
+  try{
+    const r = await fetch(API_BASE + '/check-frameable?url=' + encodeURIComponent(source.url));
+    const data = await r.json();
+    frameable = !!data.frameable;
+  }catch(e){ frameable = true; } // check failed → let the browser try the iframe
+
+  const vframe = $('vframe');
+  const old = $('uvideo'); if (old) old.remove();
+
+  if (frameable){
+    /* ── In-place: bare iframe, exactly in the player slot ── */
+    const iframe = document.createElement('iframe');
+    iframe.id = 'uvideo';
+    iframe.src = source.url;
+    iframe.style.cssText = 'width:100%;height:100%;border:0;display:block;';
+    iframe.allowFullscreen = true;
+    iframe.addEventListener('load', hideVideoLoading);
+    showVideoLoading('Connecting to ' + name + '…');
+    vframe.appendChild(iframe);
+  } else {
+    /* ── Blocked → centered companion popup + notice in the slot ── */
+    lastPopupUrl = source.url;
+    const win = openCenteredPopup(source.url);
+    if (win){
+      win.focus();
+      showVideoNotice(
+        '<p class="big">' + esc(name) + ' doesn\u2019t allow embedding.</p>' +
+        '<p>Opened in a companion window \u2713</p>' +
+        '<p><a href="' + esc(source.url) + '" target="_blank" rel="noopener noreferrer">Open the window again</a></p>'
+      );
+    } else {
+      // popup blocker killed window.open — give a direct link instead
+      showVideoNotice(
+        '<p class="big">' + esc(name) + ' can\u2019t be embedded here.</p>' +
+        '<p>Your browser blocked the popup window.</p>' +
+        '<p><a href="' + esc(source.url) + '" target="_blank" rel="noopener noreferrer">\u25B6 Click to open ' + esc(name) + '</a></p>'
+      );
+    }
+  }
+  startWatchTimer(); // progress ticks whether in-frame or in popup
 }
 
-/* ───────────── Episodes ───────────── */
+function openCenteredPopup(url){
+  try{
+    const sw = (window.screen && window.screen.width) || 1280;
+    const sh = (window.screen && window.screen.height) || 800;
+    const w = Math.min(1100, Math.round(sw * 0.85));
+    const h = Math.min(700, Math.round(sh * 0.85));
+    const left = Math.max(0, Math.round((sw - w) / 2));
+    const top = Math.max(0, Math.round((sh - h) / 2));
+    return window.open(url, '_blank',
+      'popup=yes,width=' + w + ',height=' + h + ',left=' + left + ',top=' + top);
+  }catch(e){ return null; }
+}
+
+let videoLoadTimer = null;
+function showVideoLoading(msg){
+  const ph = $('vplaceholder');
+  ph.style.display = 'flex';
+  ph.innerHTML = '<div class="spinner"></div><p>' + esc(msg || 'Loading…') + '</p>';
+  clearTimeout(videoLoadTimer);
+  videoLoadTimer = setTimeout(() => {
+    if (ph.style.display !== 'none'){
+      ph.innerHTML = '<p>Still loading… this server may be down — try another below.</p>';
+    }
+  }, 12000);
+}
+function hideVideoLoading(){
+  clearTimeout(videoLoadTimer);
+  $('vplaceholder').style.display = 'none';
+}
+function showVideoPlaceholder(msg){
+  clearTimeout(videoLoadTimer);
+  const ph = $('vplaceholder');
+  ph.style.display = 'flex';
+  ph.innerHTML = '<p>' + esc(msg) + '</p>';
+}
+function showVideoNotice(html){ // raw-but-escaped HTML block for popup notices
+  clearTimeout(videoLoadTimer);
+  const ph = $('vplaceholder');
+  ph.style.display = 'flex';
+  ph.innerHTML = html;
+}
+
+/* ═══════════ Episodes (series only) ═══════════ */
 function renderSeasons(){
   $('seasonsBar').innerHTML = seasons.map(s =>
     '<button class="season-pill ' + (s.season_number === activeSeason ? 'active' : '') + '" data-season="' + s.season_number + '">S' + s.season_number +
@@ -1124,8 +1062,7 @@ function renderEpisodesList(){
   note.textContent = 'Pick an episode — your latest one and watch time are remembered.';
   let html = '';
   for (let ep = 1; ep <= count; ep++){
-    const sel = ep === activeEpisode ? ' selected' : '';
-    html += '<button class="ep-btn' + sel + '" data-ep="' + ep + '">E' + ep + '</button>';
+    html += '<button class="ep-btn' + (ep === activeEpisode ? ' selected' : '') + '" data-ep="' + ep + '">E' + ep + '</button>';
   }
   grid.innerHTML = html;
 
@@ -1134,14 +1071,15 @@ function renderEpisodesList(){
       grid.querySelectorAll('.ep-btn').forEach(x => x.classList.remove('selected'));
       b.classList.add('selected');
       activeEpisode = Number(b.dataset.ep);
+      recordProgress({ season: activeSeason, episode: activeEpisode, minutesWatched: 0 });
       toast('Loading S' + activeSeason + ' · E' + activeEpisode);
-      loadServers();
+      loadSources();
       renderResume(Store.find('hist', currentMovie.id));
       $('playerSection').scrollIntoView({ behavior:'smooth', block:'start' });
     }));
 }
 
-/* ───────────── Where to watch ───────────── */
+/* ═══════════ Providers + Cast ═══════════ */
 async function renderProviders(movie){
   const grid = $('providerGrid'), note = $('watchNote');
   if (!movie){ grid.innerHTML = ''; note.textContent = ''; return; }
@@ -1165,13 +1103,15 @@ async function renderProviders(movie){
   note.textContent = 'Official platform links (region: ' + region + ').';
 }
 
-/* ───────────── Cast ───────────── */
 async function renderCast(movie){
-  if (!movie){ return; }
+  if (!movie) return;
   const credits = await api('/credits/' + movie.id);
   const cast = (credits && credits.cast) || [];
-  if (credits && credits.runtime && currentMovie && !currentMovie.runtime){
+  if (credits && credits.runtime && currentMovie){
     currentMovie.runtime = credits.runtime;
+    // patch runtime into the history entry so progress % works for movies
+    const h = Store.find('hist', currentMovie.id);
+    if (h && !h.runtime){ h.runtime = credits.runtime; Store.add('hist', h); }
   }
   if (!cast.length){ $('castSection').style.display = 'none'; return; }
   $('castSection').style.display = 'block';
@@ -1183,7 +1123,7 @@ async function renderCast(movie){
     '</div>').join('');
 }
 
-/* ───────────── Toast, keyboard, tabbar ───────────── */
+/* ═══════════ Toast / keyboard / tabbar / close ═══════════ */
 let toastTimer = null;
 function toast(msg){
   const t = $('toast');
@@ -1206,12 +1146,12 @@ function initKeyboard(){
 }
 function closePortal(){
   stopWatchTimer();
-  closePlayerWindow();
   $('portal').classList.remove('on');
   document.body.style.overflow = '';
+  const old = $('uvideo'); if (old) old.remove();
   currentMovie = null; dynamicSources = [];
   $('resumeBox').innerHTML = '';
-  showStageIdle();
+  showVideoPlaceholder('Select a server below to start watching.');
 }
 function bindStaticEvents(){
   document.querySelectorAll('[data-view]').forEach(btn =>
@@ -1230,7 +1170,7 @@ function loadTabbar(){
     b.addEventListener('click', () => switchView(b.dataset.view)));
 }
 
-/* ───────────── Sync panel ───────────── */
+/* ═══════════ Sync panel ═══════════ */
 function initSyncPanel(){
   $('syncPanel').style.display = 'block';
   $('syncBtn').addEventListener('click', startSync);
