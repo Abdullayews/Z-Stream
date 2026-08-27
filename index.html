@@ -950,6 +950,8 @@ async function selSrc(btn, name){
 
   showVideoLoading('Checking ' + name + '…');
 
+  // X-Frame-Options / CSP check still matters: headers block ANY iframe,
+  // even nested inside srcdoc — those providers go to the popup path.
   let frameable = true;
   try{
     const r = await fetch(API_BASE + '/check-frameable?url=' + encodeURIComponent(source.url));
@@ -961,17 +963,33 @@ async function selSrc(btn, name){
   removeEmbed();
 
   if (frameable){
-    /* ════════════════════════════════════════════════════════
-       EXACT iframe structure requested:
-       <iframe src="…" allowfullscreen="" webkitallowfullscreen="true" scrolling="no"></iframe>
-       Nothing else. Sizing handled by .vframe iframe CSS.
-       ════════════════════════════════════════════════════════ */
+    /* ════════════════════════════════════════════════════════════
+       MATRYOSHKA PLAYER (PrimeWire pattern)
+       Outer iframe → sandboxed srcdoc wrapper (opaque origin)
+       Inner iframe → the real provider URL
+       ════════════════════════════════════════════════════════════ */
+    const wrapper =
+      '<!DOCTYPE html><html><head><meta charset="UTF-8">' +
+      '<style>' +
+      'html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#000}' +
+      'iframe{width:100%;height:100%;border:0;display:block}' +
+      '</style></head><body>' +
+      '<iframe src="' + source.url.replace(/"/g, '&quot;') + '" allowfullscreen webkitallowfullscreen="true" scrolling="no"></iframe>' +
+      '</body></html>';
+
     const iframe = document.createElement('iframe');
-    iframe.src = source.url;
+    iframe.className = 'sp-player';
+    iframe.title = (currentMovie && currentMovie.title) ? currentMovie.title : 'Player';
+    iframe.setAttribute('frameborder', '0');
     iframe.setAttribute('allowfullscreen', '');
-    iframe.setAttribute('webkitallowfullscreen', 'true');
-    iframe.setAttribute('scrolling', 'no');
-    iframe.addEventListener('load', hideVideoLoading); // JS event — not a DOM attribute
+    iframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share');
+    iframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
+    // Exact flag set from the reference — duplicate allow-popups kept verbatim
+    iframe.setAttribute('sandbox', 'allow-popups allow-top-navigation-by-user-activation allow-scripts allow-modals allow-popups allow-downloads allow-pointer-lock allow-presentation');
+    iframe.style.cssText = 'width:100%;height:100%;border:0;display:block;background:#000';
+    iframe.srcdoc = wrapper;
+    iframe.addEventListener('load', hideVideoLoading); // fires when inner iframe finishes too
+
     showVideoLoading('Connecting to ' + name + '…');
     vframe.appendChild(iframe);
   } else {
