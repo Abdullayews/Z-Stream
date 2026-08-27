@@ -193,11 +193,11 @@ body{font-family:'Inter',sans-serif;background:var(--void);color:var(--text);min
 .sub-head{font-family:'Orbitron';font-size:13px;font-weight:700;letter-spacing:2px;text-transform:uppercase;display:flex;align-items:center;gap:10px;color:var(--fog)}
 .sub-head::before{content:'';width:4px;height:18px;background:var(--lava);border-radius:2px;box-shadow:0 0 12px var(--lava)}
 
-/* ── Player slot (frame-in-place / companion popup fallback) ── */
+/* ── Player slot — iframe is EXACTLY: src + allowfullscreen + webkitallowfullscreen + scrolling ── */
 .vframe{position:relative;width:min(100%,calc((100vh - 120px) * 16 / 9));max-height:calc(100vh - 120px);aspect-ratio:16/9;margin:0 auto;background:#000;border-radius:14px;overflow:hidden;border:1px solid var(--border);box-shadow:0 20px 50px #000c}
 @supports (height:100dvh){.vframe{width:min(100%,calc((100dvh - 120px) * 16 / 9));max-height:calc(100dvh - 120px)}}
 .vframe iframe{width:100%;height:100%;border:0;display:block;background:#000}
-.vplaceholder{position:absolute;inset:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;color:var(--ash);padding:24px}
+.vplaceholder{position:absolute;inset:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;color:var(--ash);padding:24px;z-index:2}
 .vplaceholder p{font-size:14px;max-width:440px;line-height:1.7}
 .vplaceholder .big{font-size:16px;font-weight:700;color:var(--fog)}
 .vplaceholder a{color:var(--flame)}
@@ -351,7 +351,7 @@ body{font-family:'Inter',sans-serif;background:var(--void);color:var(--text);min
       </div>
     </div>
 
-    <!-- Player slot: iframe when allowed, companion-popup notice when blocked -->
+    <!-- Player slot -->
     <div class="watch-section" id="playerSection">
       <div class="sub-head">Watch Now</div>
       <div class="vframe" id="vframe">
@@ -399,8 +399,9 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&l
 const fmtRating = r => Number(r || 0).toFixed(1);
 const PLACEHOLDER = "data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 450'%3E%3Crect width='300' height='450' fill='%23150203'/%3E%3Ctext x='150' y='230' fill='%235a2226' font-family='sans-serif' font-size='16' text-anchor='middle'%3ENo Poster%3C/text%3E%3C/svg%3E";
 function imgFallback(img){ img.onerror = null; img.src = PLACEHOLDER; }
+function removeEmbed(){ const f = document.querySelector('#vframe iframe'); if (f) f.remove(); }
 
-/* ═══════════ Storage (favorites / history with progress) ═══════════ */
+/* ═══════════ Storage ═══════════ */
 const Store = {
   get(k){ try{ return JSON.parse(localStorage.getItem('zs_'+k)) || []; }catch{ return []; } },
   set(k,v){ localStorage.setItem('zs_'+k, JSON.stringify(v)); },
@@ -496,7 +497,7 @@ async function doLogin(){
 let view = 'home', cat = 'all', allMovies = [], currentMovie = null;
 let heroItems = [], heroIndex = 0, heroInterval = null;
 let activeSeason = 1, activeEpisode = 1, seasons = [], dynamicSources = [], preferredSource = null;
-let watchTimer = null, lastPopupUrl = null;
+let watchTimer = null;
 
 async function startApp(){
   $('loginPortal').style.display = 'none';
@@ -521,7 +522,7 @@ async function fetchMovies(){
   return Array.isArray(d) ? d : [];
 }
 
-/* ═══════════ Views (Home / Movies / Series / Favorites / History) ═══════════ */
+/* ═══════════ Views ═══════════ */
 function switchView(v){
   view = v; stopHero();
   document.querySelectorAll('.navlink, .tabbar button').forEach(b =>
@@ -542,7 +543,7 @@ function renderView(){
     f.length ? renderSection('Favorites', f) : showEmpty('No Favorites Yet','Tap the heart on any card to keep it here.');
   } else if (view === 'history'){
     renderHistoryView();
-  } else { // 'movies' | 'series'
+  } else {
     const f = allMovies.filter(m => m.type === view);
     f.length ? renderSection(view === 'movies' ? 'Movies' : 'Series', f.slice(0, 100))
       : showEmpty('Empty', 'No ' + view + ' cached yet — run a sync.');
@@ -801,7 +802,7 @@ async function openDetail(id){
   $('serverGrid').innerHTML = '';
   $('episodesSection').style.display = 'none';
   showVideoPlaceholder('Select a server below to start watching.');
-  const old = $('uvideo'); if (old) old.remove();
+  removeEmbed();
 
   $('portal').classList.add('on');
   document.body.style.overflow = 'hidden';
@@ -811,7 +812,6 @@ async function openDetail(id){
   if (full){
     currentMovie = full;
     renderDetail(full);
-    // ← HISTORY FIX: record the open immediately so "last watched" always appears
     recordProgress({});
     renderResume(Store.find('hist', id));
   } else {
@@ -859,7 +859,7 @@ function renderFavBtn(){
 });
  $('closeBtn').addEventListener('click', closePortal);
 
-/* Resume banner (movies with progress AND series episodes) */
+/* Resume banner */
 function renderResume(entry){
   const box = $('resumeBox');
   if (!entry || (!entry.season && !(entry.minutesWatched > 0))){ box.innerHTML = ''; return; }
@@ -883,7 +883,7 @@ function renderResume(entry){
     '</div>';
 }
 
-/* Record watch progress — creates history entries even for movies */
+/* Record watch progress */
 function recordProgress(extra){
   if (!currentMovie || !currentMovie.title || currentMovie.title === 'Loading…') return;
   const prev = Store.find('hist', currentMovie.id) || {};
@@ -897,7 +897,7 @@ function recordProgress(extra){
   refreshFavButtons(currentMovie.id);
 }
 
-/* Watch-time ticker — 1 min while a server plays; creates entry if missing */
+/* Watch-time ticker */
 function startWatchTimer(){
   stopWatchTimer();
   watchTimer = setInterval(() => {
@@ -914,7 +914,7 @@ function startWatchTimer(){
 }
 function stopWatchTimer(){ clearInterval(watchTimer); watchTimer = null; }
 
-/* ═══════════ Player: frame-in-place + popup fallback ═══════════ */
+/* ═══════════ Player + servers ═══════════ */
 async function loadSources(){
   if (!currentMovie || !currentMovie.id) return;
   const grid = $('serverGrid');
@@ -950,30 +950,31 @@ async function selSrc(btn, name){
 
   showVideoLoading('Checking ' + name + '…');
 
-  // Server-side X-Frame-Options / CSP frame-ancestors check (cached, fast)
   let frameable = true;
   try{
     const r = await fetch(API_BASE + '/check-frameable?url=' + encodeURIComponent(source.url));
     const data = await r.json();
     frameable = !!data.frameable;
-  }catch(e){ frameable = true; } // check failed → let the browser try the iframe
+  }catch(e){ frameable = true; }
 
   const vframe = $('vframe');
-  const old = $('uvideo'); if (old) old.remove();
+  removeEmbed();
 
   if (frameable){
-    /* ── In-place: bare iframe, exactly in the player slot ── */
+    /* ════════════════════════════════════════════════════════
+       EXACT iframe structure requested:
+       <iframe src="…" allowfullscreen="" webkitallowfullscreen="true" scrolling="no"></iframe>
+       Nothing else. Sizing handled by .vframe iframe CSS.
+       ════════════════════════════════════════════════════════ */
     const iframe = document.createElement('iframe');
-    iframe.id = 'uvideo';
     iframe.src = source.url;
-    iframe.style.cssText = 'width:100%;height:100%;border:0;display:block;';
-    iframe.allowFullscreen = true;
-    iframe.addEventListener('load', hideVideoLoading);
+    iframe.setAttribute('allowfullscreen', '');
+    iframe.setAttribute('webkitallowfullscreen', 'true');
+    iframe.setAttribute('scrolling', 'no');
+    iframe.addEventListener('load', hideVideoLoading); // JS event — not a DOM attribute
     showVideoLoading('Connecting to ' + name + '…');
     vframe.appendChild(iframe);
   } else {
-    /* ── Blocked → centered companion popup + notice in the slot ── */
-    lastPopupUrl = source.url;
     const win = openCenteredPopup(source.url);
     if (win){
       win.focus();
@@ -983,7 +984,6 @@ async function selSrc(btn, name){
         '<p><a href="' + esc(source.url) + '" target="_blank" rel="noopener noreferrer">Open the window again</a></p>'
       );
     } else {
-      // popup blocker killed window.open — give a direct link instead
       showVideoNotice(
         '<p class="big">' + esc(name) + ' can\u2019t be embedded here.</p>' +
         '<p>Your browser blocked the popup window.</p>' +
@@ -991,7 +991,7 @@ async function selSrc(btn, name){
       );
     }
   }
-  startWatchTimer(); // progress ticks whether in-frame or in popup
+  startWatchTimer();
 }
 
 function openCenteredPopup(url){
@@ -1029,14 +1029,14 @@ function showVideoPlaceholder(msg){
   ph.style.display = 'flex';
   ph.innerHTML = '<p>' + esc(msg) + '</p>';
 }
-function showVideoNotice(html){ // raw-but-escaped HTML block for popup notices
+function showVideoNotice(html){
   clearTimeout(videoLoadTimer);
   const ph = $('vplaceholder');
   ph.style.display = 'flex';
   ph.innerHTML = html;
 }
 
-/* ═══════════ Episodes (series only) ═══════════ */
+/* ═══════════ Episodes ═══════════ */
 function renderSeasons(){
   $('seasonsBar').innerHTML = seasons.map(s =>
     '<button class="season-pill ' + (s.season_number === activeSeason ? 'active' : '') + '" data-season="' + s.season_number + '">S' + s.season_number +
@@ -1109,7 +1109,6 @@ async function renderCast(movie){
   const cast = (credits && credits.cast) || [];
   if (credits && credits.runtime && currentMovie){
     currentMovie.runtime = credits.runtime;
-    // patch runtime into the history entry so progress % works for movies
     const h = Store.find('hist', currentMovie.id);
     if (h && !h.runtime){ h.runtime = credits.runtime; Store.add('hist', h); }
   }
@@ -1148,7 +1147,7 @@ function closePortal(){
   stopWatchTimer();
   $('portal').classList.remove('on');
   document.body.style.overflow = '';
-  const old = $('uvideo'); if (old) old.remove();
+  removeEmbed();
   currentMovie = null; dynamicSources = [];
   $('resumeBox').innerHTML = '';
   showVideoPlaceholder('Select a server below to start watching.');
