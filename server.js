@@ -15,7 +15,7 @@ const {
 
 /* ═══════════════ SETUP ═══════════════ */
 const app = express();
-app.set('trust proxy', 1); // REQUIRED on Render — else rate limiter blocks everyone
+app.set('trust proxy', 1); // REQUIRED on Render
 
 app.use(express.json());
 app.use(express.static(__dirname));
@@ -27,6 +27,8 @@ if (missingEnv.length) console.error('❌ MISSING ENV VARS: ' + missingEnv.join(
 if (!process.env.TMDB_API_KEY) console.warn('⚠️  TMDB_API_KEY missing — sync/seasons/credits/providers will fail.');
 
 const TMDB_BASE = 'https://api.themoviedb.org/3';
+const TMDB_IMG = 'https://image.tmdb.org/t/p/w342';
+const TMDB_BACKDROP = 'https://image.tmdb.org/t/p/w780';
 const TMDB_KEY = process.env.TMDB_API_KEY;
 
 const generalLimiter = rateLimit({
@@ -90,12 +92,10 @@ const genreMap = {
   99: 'Documentary', 18: 'Drama', 10751: 'Family', 14: 'Fantasy', 36: 'History',
   27: 'Horror', 10402: 'Music', 9648: 'Mystery', 10749: 'Romance', 878: 'Sci-Fi',
   10770: 'TV Movie', 53: 'Thriller', 10752: 'War', 37: 'Western',
-  // TV-specific genres (TMDB genre_ids on /discover/tv)
   10759: 'Action & Adventure', 10762: 'Kids', 10763: 'News', 10764: 'Reality',
   10765: 'Sci-Fi & Fantasy', 10766: 'Soap', 10767: 'Talk', 10768: 'War & Politics'
 };
 
-// Movies + Series only (anime table dropped per DB reset)
 const tableMap = { movies: 'movies_cache', series: 'series_cache' };
 
 function classifyDbError(err) {
@@ -111,7 +111,7 @@ function classifyDbError(err) {
   return `Database error (${code || 'unknown'}) — see Render logs.`;
 }
 
-/* ═══════════════ SCHEMA (skips your existing reset tables) ═══════════════ */
+/* ═══════════════ SCHEMA ═══════════════ */
 let schemaReady = false;
 
 async function ensureSchema() {
@@ -137,6 +137,13 @@ async function ensureSchema() {
     )`);
   }
 
+  // Small meta table so the sync engine can persist its last-completion time
+  // across Render restarts (in-memory state dies on every deploy/sleep).
+  await pool.query(`CREATE TABLE IF NOT EXISTS sync_meta (
+    k VARCHAR(32) NOT NULL PRIMARY KEY,
+    v VARCHAR(128)
+  )`);
+
   const [[{ c }]] = await pool.query('SELECT COUNT(*) AS c FROM users');
   if (c === 0) {
     const au = process.env.ADMIN_USER || 'admin';
@@ -155,27 +162,24 @@ async function ensureSchema() {
   schemaReady = true;
 }
 
-async function bootDb() {
-  for (let i = 1; i <= 3; i++) {
-    try {
-      await pool.query('SELECT 1');
-      await ensureSchema();
-      console.log('✓ Database connected & schema ready');
-      return;
-    } catch (e) {
-      console.error(`✗ DB init attempt ${i}/3 failed: ${classifyDbError(e)}`);
-      await sleep(4000);
-    }
-  }
-  console.error('✗ Database NOT ready at boot — login attempts will retry automatically.');
+async function getMeta(k) {
+  try {
+    const [[r]] = await pool.query('SELECT v FROM sync_meta WHERE k = ?', [k]);
+    return r ? r.v : null;
+  } catch (e) { return null; }
 }
-bootDb();
+async function setMeta(k, v) {
+  try {
+    await pool.query('INSERT INTO sync_meta (k, v) VALUES (?, ?) ON DUPLICATE KEY UPDATE v = VALUES(v)', [k, v]);
+  } catch (e) {}
+}
 
 /* ═══════════════ HEALTH ═══════════════ */
 app.get('/api/health', async (req, res) => {
   const out = {
     ok: false, db: false, dbError: null, tables: {}, userCount: null,
     tmdbKey: !!TMDB_KEY, cacheEntries: apiCache.cache.size,
+    sync: { isSyncing: syncState.isSyncing, category: syncState.category, year: syncState.year },
     uptimeSec: Math.floor(process.uptime())
   };
   try {
@@ -211,8 +215,29 @@ app.post('/api/login', loginLimiter, async (req, res) => {
   }
 });
 
-/* ═══════════════ SYNC (movies + series only) ═══════════════ */
-let syncState = { isSyncing: false, currentPage: 0, totalItems: 0, category: 'idle' };
+/* ═══════════════════════════════════════════════════════════
+   SYNC ENGINE v3 — ALWAYS-ON, FULL LIBRARY
+   • Walks every year (current → SYNC_FLOOR_YEAR) per category
+   • Splits years that exceed TMDB's 500-page query cap into halves
+   • Batch inserts with existence pre-checks (cheap re-syncs)
+   • Auto-runs on boot (if stale) and every SYNC_INTERVAL_HOURS
+   • Stoppable via POST /api/stop-sync
+   ═══════════════════════════════════════════════════════════ */
+const SYNC_FLOOR_YEAR = parseInt(process.env.SYNC_FLOOR_YEAR) || 1900;
+const SYNC_INTERVAL_HOURS = Math.max(1, parseInt(process.env.SYNC_INTERVAL_HOURS) || 6);
+const PAGE_DELAY_MS = 400;   // ~2.5 req/s — far under TMDB's ~50 req/s limit
+const TMDB_MAX_PAGES = 500;  // TMDB hard cap per discover query
+
+let syncState = {
+  isSyncing: false,
+  category: 'idle',
+  year: null,
+  page: 0,
+  currentPage: 0,   // frontend compat
+  totalItems: 0,
+  lastRunAt: null,
+  nextRunAt: null
+};
 
 async function fetchWithRetry(url, retries = 3) {
   let lastErr;
@@ -223,96 +248,273 @@ async function fetchWithRetry(url, retries = 3) {
   throw lastErr;
 }
 
-app.get('/api/start-sync', async (req, res) => {
-  if (syncState.isSyncing) return res.json({ msg: 'Already syncing', ...syncState });
+function yearParams(category, year) {
+  return category === 'movies'
+    ? `primary_release_year=${year}`
+    : `first_air_date_year=${year}`;
+}
+
+function dateParams(category, from, to) {
+  return category === 'movies'
+    ? `primary_release_date.gte=${from}&primary_release_date.lte=${to}`
+    : `first_air_date.gte=${from}&first_air_date.lte=${to}`;
+}
+
+function discoverUrl(category, params, page) {
+  const p = category === 'movies' ? 'movie' : 'tv';
+  return `${TMDB_BASE}/discover/${p}?api_key=${TMDB_KEY}&include_adult=false&sort_by=popularity.desc&${params}&page=${page}`;
+}
+
+/* Batch insert — checks which IDs already exist first, so re-sync passes
+   cost one tiny SELECT per page instead of re-writing every row. */
+async function insertBatch(tableName, items) {
+  items = (items || []).filter(m => m && m.id);
+  if (!items.length) return 0;
+
+  const ids = items.map(m => m.id);
+  let existing = new Set();
   try {
-    await ensureSchema();
-    let total = 0;
-    for (const t of Object.values(tableMap)) {
-      const [[row]] = await pool.query(`SELECT COUNT(*) AS c FROM ${t}`);
-      total += row.c;
-    }
-    syncState = { isSyncing: true, currentPage: 0, totalItems: total, category: 'movies' };
-    runSync();
-    res.json({ msg: 'Sync started', ...syncState });
-  } catch (err) {
-    res.status(503).json({ msg: classifyDbError(err), isSyncing: false, currentPage: 0, totalItems: 0, category: 'idle' });
+    const [rows] = await pool.query(`SELECT tmdb_id FROM ${tableName} WHERE tmdb_id IN (?)`, [ids]);
+    for (const r of rows) existing.add(r.tmdb_id);
+  } catch (e) { /* on error, fall through and insert everything */ }
+
+  const fresh = items.filter(m => !existing.has(m.id));
+  if (!fresh.length) return 0;
+
+  const values = [];
+  const params = [];
+  for (const m of fresh) {
+    const genreId = (m.genre_ids && m.genre_ids[0]) || null;
+    params.push(
+      m.id,
+      m.title || m.name || 'Untitled',
+      m.release_date || m.first_air_date || null,
+      m.vote_average || 0,
+      genreId ? (genreMap[genreId] || 'Unknown') : 'Unknown',
+      m.poster_path ? TMDB_IMG + m.poster_path : null,
+      m.backdrop_path ? TMDB_BACKDROP + m.backdrop_path : null,
+      m.overview || ''
+    );
+    values.push('(?,?,?,?,?,?,?,?)');
   }
-});
-
-app.get('/api/sync-status', (req, res) => res.json(syncState));
-
-async function runSync() {
-  const today = new Date().toISOString().slice(0, 10);
-  const categories = [
-    { name: 'movies', url: `${TMDB_BASE}/discover/movie?api_key=${TMDB_KEY}&sort_by=primary_release_date.desc&include_adult=false&primary_release_date.lte=${today}&page=` },
-    { name: 'series', url: `${TMDB_BASE}/discover/tv?api_key=${TMDB_KEY}&sort_by=first_air_date.desc&include_adult=false&first_air_date.lte=${today}&page=` }
-  ];
 
   try {
-    for (const category of categories) {
-      if (!syncState.isSyncing) break;
-      syncState.category = category.name;
-      const tableName = tableMap[category.name];
-      let page = 1, hasMore = true;
-
-      while (hasMore && syncState.isSyncing && page <= 10) {
-        let response;
-        try { response = await fetchWithRetry(`${category.url}${page}`); }
-        catch (err) {
-          console.error(`Sync: giving up on ${category.name} page ${page}: ${err.message}`);
-          hasMore = false; break;
-        }
-
-        const items = response.data.results || [];
-        if (!items.length) { hasMore = false; break; }
-
-        const pageIds = items.map(m => m.id).filter(Boolean);
-        if (pageIds.length) {
-          const [existing] = await pool.query(`SELECT tmdb_id FROM ${tableName} WHERE tmdb_id IN (?)`, [pageIds]);
-          if (existing.length === items.length) {
-            console.log(`Sync: ${category.name} page ${page} fully cached — skipping rest.`);
-            hasMore = false; break;
-          }
-        }
-
-        for (const m of items) {
-          const genreId = (m.genre_ids && m.genre_ids[0]) || null;
-          try {
-            const [result] = await pool.query(
-              `INSERT INTO ${tableName} (tmdb_id, title, release_date, rating, genre, poster, backdrop, overview)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-               ON DUPLICATE KEY UPDATE tmdb_id = tmdb_id`,
-              [
-                m.id,
-                m.title || m.name || 'Untitled',
-                m.release_date || m.first_air_date || null,
-                m.vote_average || 0,
-                genreId ? (genreMap[genreId] || 'Unknown') : 'Unknown',
-                m.poster_path ? `https://image.tmdb.org/t/p/w342${m.poster_path}` : null,
-                m.backdrop_path ? `https://image.tmdb.org/t/p/w780${m.backdrop_path}` : null,
-                m.overview || ''
-              ]
-            );
-            if (result.affectedRows === 1) syncState.totalItems++;
-          } catch (e) { /* skip bad row */ }
-        }
-
-        syncState.currentPage = page;
-        page++;
-        await sleep(page % 20 === 0 ? 10000 : 300);
-      }
-    }
-    console.log('✓ TMDB sync finished.');
-  } catch (err) {
-    console.error('Sync crashed:', err.message);
-  } finally {
-    syncState.isSyncing = false;
-    apiCache.clear(); // fresh items appear immediately
+    const [result] = await pool.query(
+      `INSERT INTO ${tableName} (tmdb_id, title, release_date, rating, genre, poster, backdrop, overview)
+       VALUES ${values.join(',')}
+       ON DUPLICATE KEY UPDATE tmdb_id = tmdb_id`,
+      params
+    );
+    return result.affectedRows || fresh.length;
+  } catch (e) {
+    console.error(`Insert batch into ${tableName} failed: ${e.message}`);
+    return 0;
   }
 }
 
-/* ═══════════════ CATALOG (movies + series) ═══════════════ */
+/* Page through one discover query (a year, or a half-year date range) */
+async function syncQueryRange(category, tableName, params, label, startPage = 1, knownTotalPages = null) {
+  let page = startPage;
+  let totalPages = knownTotalPages || 1;
+  let failures = 0;
+
+  while (page <= totalPages && syncState.isSyncing) {
+    let response;
+    try {
+      response = await fetchWithRetry(discoverUrl(category, params, page));
+      failures = 0;
+    } catch (err) {
+      failures++;
+      console.error(`Sync ${label} p${page}: ${err.message}`);
+      if (failures >= 3) { console.warn(`Sync: skipping rest of ${label}`); return; }
+      await sleep(5000);
+      continue;
+    }
+
+    const items = response.data.results || [];
+    const rawTotal = response.data.total_pages || 0;
+    totalPages = Math.min(rawTotal, TMDB_MAX_PAGES);
+    if (!items.length) return;
+
+    syncState.totalItems += await insertBatch(tableName, items);
+
+    syncState.page = page;
+    syncState.currentPage = page; // frontend compat
+    page++;
+    await sleep(PAGE_DELAY_MS);
+  }
+}
+
+/* Sync one year. If the year exceeds TMDB's 500-page window, re-query it
+   as two half-year date ranges so nothing is missed. */
+async function syncYear(category, tableName, year) {
+  let probe;
+  try {
+    probe = await fetchWithRetry(discoverUrl(category, yearParams(category, year), 1));
+  } catch (err) {
+    console.error(`Sync ${category} ${year}: probe failed (${err.message}) — skipping year`);
+    await sleep(5000);
+    return;
+  }
+
+  const rawTotal = probe.data.total_pages || 0;
+  const items = probe.data.results || [];
+  if (!items.length) return;
+
+  syncState.totalItems += await insertBatch(tableName, items);
+  syncState.page = 1;
+  syncState.currentPage = 1;
+  await sleep(PAGE_DELAY_MS);
+
+  if (rawTotal > TMDB_MAX_PAGES) {
+    console.log(`Sync: ${category} ${year} has ${rawTotal} pages — splitting into half-years`);
+    await syncQueryRange(category, tableName, dateParams(category, `${year}-01-01`, `${year}-06-30`), `${category} ${year} H1`);
+    await syncQueryRange(category, tableName, dateParams(category, `${year}-07-01`, `${year}-12-31`), `${category} ${year} H2`);
+    return;
+  }
+
+  if (rawTotal > 1) {
+    await syncQueryRange(category, tableName, yearParams(category, year), `${category} ${year}`, 2, rawTotal);
+  }
+}
+
+async function runSync() {
+  let crashed = false;
+  try {
+    for (const category of ['movies', 'series']) {
+      if (!syncState.isSyncing) break;
+      syncState.category = category;
+      const tableName = tableMap[category];
+      const thisYear = new Date().getFullYear();
+
+      for (let year = thisYear; year >= SYNC_FLOOR_YEAR; year--) {
+        if (!syncState.isSyncing) break;
+        syncState.year = year;
+        await syncYear(category, tableName, year);
+        await sleep(150);
+      }
+    }
+  } catch (err) {
+    crashed = true;
+    console.error('Sync crashed:', err.message);
+  }
+
+  const stopped = !syncState.isSyncing; // stop endpoint sets this mid-run
+  syncState.isSyncing = false;
+  apiCache.clear();
+  try {
+    const [[m]] = await pool.query('SELECT COUNT(*) AS c FROM movies_cache');
+    const [[s]] = await pool.query('SELECT COUNT(*) AS c FROM series_cache');
+    syncState.totalItems = m.c + s.c;
+  } catch (e) {}
+
+  if (!stopped && !crashed) {
+    await setMeta('lastCompletedAt', new Date().toISOString());
+    console.log(`✓ TMDB sync pass completed — ${syncState.totalItems} items in DB.`);
+  } else {
+    console.log(stopped
+      ? '⏹ Sync stopped early — will resume on next trigger.'
+      : '⚠️ Sync pass crashed — will retry on next trigger.');
+  }
+}
+
+async function startSyncJob() {
+  if (syncState.isSyncing) return false;
+  if (!TMDB_KEY) { console.warn('Sync skipped: no TMDB_API_KEY'); return false; }
+  try {
+    await ensureSchema();
+    let existing = 0;
+    try {
+      const [[m]] = await pool.query('SELECT COUNT(*) AS c FROM movies_cache');
+      const [[s]] = await pool.query('SELECT COUNT(*) AS c FROM series_cache');
+      existing = m.c + s.c;
+    } catch (e) {}
+    syncState = {
+      isSyncing: true,
+      category: 'movies',
+      year: new Date().getFullYear(),
+      page: 0,
+      currentPage: 0,
+      totalItems: existing,
+      lastRunAt: new Date().toISOString(),
+      nextRunAt: syncState.nextRunAt || null
+    };
+    console.log(`▶ Sync started (floor year ${SYNC_FLOOR_YEAR}) — DB currently holds ${existing} items`);
+    runSync(); // background — never awaited
+    return true;
+  } catch (err) {
+    console.error('Failed to start sync:', err.message);
+    syncState.isSyncing = false;
+    return false;
+  }
+}
+
+let autoSyncTimer = null;
+function scheduleAutoSync() {
+  if (!TMDB_KEY) return;
+  clearInterval(autoSyncTimer);
+  const intervalMs = SYNC_INTERVAL_HOURS * 60 * 60 * 1000;
+  autoSyncTimer = setInterval(() => {
+    syncState.nextRunAt = new Date(Date.now() + intervalMs).toISOString();
+    if (!syncState.isSyncing) {
+      startSyncJob().then(started => { if (started) console.log('⏰ Scheduled auto-sync started.'); });
+    }
+  }, intervalMs);
+  syncState.nextRunAt = new Date(Date.now() + intervalMs).toISOString();
+  console.log(`✓ Auto-sync armed: every ${SYNC_INTERVAL_HOURS}h (floor year ${SYNC_FLOOR_YEAR})`);
+}
+
+app.get('/api/start-sync', async (req, res) => {
+  if (syncState.isSyncing) return res.json({ msg: 'Already syncing', ...syncState });
+  const ok = await startSyncJob();
+  if (ok) return res.json({ msg: 'Sync started', ...syncState });
+  return res.status(503).json({ msg: 'Could not start (missing TMDB key or DB down)', ...syncState });
+});
+
+app.get('/api/sync-status', (req, res) =>
+  res.json({ ...syncState, autoIntervalHours: SYNC_INTERVAL_HOURS, floorYear: SYNC_FLOOR_YEAR }));
+
+app.post('/api/stop-sync', (req, res) => {
+  if (!syncState.isSyncing) return res.json({ success: false, msg: 'Not currently syncing', ...syncState });
+  syncState.isSyncing = false; // loops exit after the current page
+  return res.json({ success: true, msg: 'Stopping — will halt after the current page.', ...syncState });
+});
+
+/* ── Boot: connect DB, then start a pass ONLY if the library is stale ── */
+async function bootDb() {
+  for (let i = 1; i <= 3; i++) {
+    try {
+      await pool.query('SELECT 1');
+      await ensureSchema();
+      console.log('✓ Database connected & schema ready');
+      return;
+    } catch (e) {
+      console.error(`✗ DB init attempt ${i}/3 failed: ${classifyDbError(e)}`);
+      await sleep(4000);
+    }
+  }
+  console.error('✗ Database NOT ready at boot — login attempts will retry automatically.');
+}
+
+bootDb().then(async () => {
+  if (!TMDB_KEY) return console.warn('⚠️ TMDB_API_KEY missing — sync disabled.');
+  scheduleAutoSync();
+  // Only auto-run on boot if the last completed pass is older than the interval
+  // (prevents every Render wake-up from launching a full re-scan)
+  const last = await getMeta('lastCompletedAt');
+  const stale = !last || (Date.now() - new Date(last).getTime()) > SYNC_INTERVAL_HOURS * 3600 * 1000;
+  if (stale) {
+    setTimeout(() => {
+      if (!syncState.isSyncing) {
+        startSyncJob().then(s => { if (s) console.log('▶ Boot sync started (stale library).'); });
+      }
+    }, 5000);
+  } else {
+    console.log('✓ Library fresh — skipping boot sync.');
+  }
+});
+
+/* ═══════════════ CATALOG ═══════════════ */
 app.get('/api/movies', async (req, res) => {
   const cached = apiCache.get('movies_catalog');
   if (cached) return res.json(cached);
@@ -469,7 +671,7 @@ app.get('/api/seasons/:id', async (req, res) => {
   } catch (err) { res.json([]); }
 });
 
-/* ═══════════════ CREDITS (cast + runtime) ═══════════════ */
+/* ═══════════════ CREDITS ═══════════════ */
 app.get('/api/credits/:id', async (req, res) => {
   const id = parseInt(req.params.id);
   if (!id) return res.json({ cast: [], runtime: 0 });
@@ -509,7 +711,7 @@ app.get('/api/providers', async (req, res) => {
   } catch (err) { res.json({ link_country: region, results: {} }); }
 });
 
-/* ═══════════════ FRAMEABLE CHECK (the "frame-in-place" illusion) ═══════════════ */
+/* ═══════════════ FRAMEABLE CHECK ═══════════════ */
 app.get('/api/check-frameable', async (req, res) => {
   const url = String(req.query.url || '');
   if (!/^https?:\/\//i.test(url)) return res.json({ frameable: false, reason: 'bad url' });
@@ -520,7 +722,6 @@ app.get('/api/check-frameable', async (req, res) => {
 
   let result;
   try {
-    // Stream so we get headers immediately, then discard the body
     const r = await axios.get(url, {
       timeout: 8000,
       maxRedirects: 5,
@@ -541,7 +742,6 @@ app.get('/api/check-frameable', async (req, res) => {
       reason = 'x-frame-options: ' + xfo;
     } else if (faMatch) {
       const fa = faMatch[1].trim();
-      // Any explicit frame-ancestors without a wildcard means we're likely not allowed
       if (!fa.split(/\s+/).includes('*')) {
         blocked = true;
         reason = 'csp frame-ancestors: ' + fa;
@@ -549,8 +749,6 @@ app.get('/api/check-frameable', async (req, res) => {
     }
     result = { frameable: !blocked, reason };
   } catch (err) {
-    // Provider blocks server-side requests (Cloudflare etc.) but usually still
-    // embeds fine in a browser → give it the benefit of the doubt.
     result = { frameable: true, reason: 'unknown (headers unreachable — letting browser try)' };
   }
 
@@ -558,12 +756,29 @@ app.get('/api/check-frameable', async (req, res) => {
   res.json(result);
 });
 
-/* ═══════════════ CACHE CLEAR / ROOT / BOOT ═══════════════ */
+/* ═══════════════ CACHE CLEAR / DB CLEAR ═══════════════ */
 app.post('/api/clear-cache', (req, res) => {
   apiCache.clear();
   res.json({ success: true, message: 'Cache cleared' });
 });
 
+app.post('/api/clear-db', async (req, res) => {
+  try {
+    await ensureSchema();
+    syncState.isSyncing = false; // halt any in-flight sync
+    await pool.query('TRUNCATE TABLE movies_cache');
+    await pool.query('TRUNCATE TABLE series_cache');
+    await setMeta('lastCompletedAt', null); // force a fresh full pass on next boot
+    apiCache.clear();
+    syncState.totalItems = 0;
+    console.log('✓ Cache tables truncated — sync will repopulate automatically.');
+    res.json({ success: true, message: 'movies_cache and series_cache cleared. Sync will repopulate automatically.' });
+  } catch (err) {
+    res.status(503).json({ success: false, message: classifyDbError(err) });
+  }
+});
+
+/* ═══════════════ ROOT & BOOT ═══════════════ */
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
 const PORT = process.env.PORT || 3000;
