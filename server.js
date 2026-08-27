@@ -18,14 +18,12 @@ const {
    ═══════════════════════════════════════════════════════════ */
 const app = express();
 
-// REQUIRED for Render — without this, the rate limiter sees every visitor
-// as the proxy IP and blocks everyone together.
+// REQUIRED for Render — without this the rate limiter sees every
+// visitor as the proxy IP and blocks everyone together.
 app.set('trust proxy', 1);
 
 app.use(express.json());
 app.use(express.static(__dirname));
-
-// Response compression (level 5 = balanced; higher melts CPU on free tier)
 app.use(compression({ level: 5, threshold: 1024 }));
 
 /* ═══════════════════════════════════════════════════════════
@@ -45,8 +43,8 @@ const TMDB_BASE = 'https://api.themoviedb.org/3';
 const TMDB_KEY = process.env.TMDB_API_KEY;
 
 /* ═══════════════════════════════════════════════════════════
-   RATE LIMITING (the ONLY middleware — no Helmet, no headers
-   that could interfere with embedded iframes)
+   RATE LIMITING (the ONLY middleware — no Helmet, nothing
+   that could interfere with popup windows or embeds)
    ═══════════════════════════════════════════════════════════ */
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -66,7 +64,7 @@ const loginLimiter = rateLimit({
 });
 
 /* ═══════════════════════════════════════════════════════════
-   IN-MEMORY TTL CACHE (cuts TiDB Request Units dramatically)
+   IN-MEMORY TTL CACHE
    ═══════════════════════════════════════════════════════════ */
 class TTLCache {
   constructor() { this.cache = new Map(); }
@@ -80,7 +78,6 @@ class TTLCache {
     return entry.value;
   }
   set(key, value, ttlMs) {
-    // Evict oldest when over budget (prevents memory exhaustion)
     if (this.cache.size > 500) {
       const oldestKey = this.cache.keys().next().value;
       this.cache.delete(oldestKey);
@@ -93,18 +90,20 @@ class TTLCache {
 const apiCache = new TTLCache();
 
 const CACHE_TTL = {
-  movies:    15 * 60 * 1000,   // catalog: 15 min
-  movie:     60 * 60 * 1000,   // single item: 1 hour
-  search:     5 * 60 * 1000,   // search: 5 min
-  categories: 60 * 60 * 1000,  // genre list: 1 hour
-  sources:   30 * 60 * 1000,   // embed URLs: 30 min
-  seasons:   60 * 60 * 1000,   // season data: 1 hour
-  credits:    6 * 60 * 60 * 1000, // cast: 6 hours
-  providers:  6 * 60 * 60 * 1000  // watch providers: 6 hours
+  movies:    15 * 60 * 1000,
+  movie:     60 * 60 * 1000,
+  search:     5 * 60 * 1000,
+  categories: 60 * 60 * 1000,
+  sources:   30 * 60 * 1000,
+  seasons:   60 * 60 * 1000,
+  credits:    6 * 60 * 60 * 1000,
+  providers:  6 * 60 * 60 * 1000
 };
 
 /* ═══════════════════════════════════════════════════════════
-   DATABASE (TiDB Cloud)
+   DATABASE — TWO categories, mirroring TMDB exactly:
+     movies_cache  ← TMDB /discover/movie
+     series_cache  ← TMDB /discover/tv   (renamed to "series")
    ═══════════════════════════════════════════════════════════ */
 const pool = mysql.createPool({
   host: process.env.TIDB_HOST,
@@ -112,13 +111,13 @@ const pool = mysql.createPool({
   user: process.env.TIDB_USER,
   password: process.env.TIDB_PASSWORD,
   database: process.env.TIDB_DATABASE,
-  ssl: { minVersion: 'TLSv1.2', rejectUnauthorized: true }, // TiDB Cloud requires TLS
+  ssl: { minVersion: 'TLSv1.2', rejectUnauthorized: true },
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
   connectTimeout: 15000,
   enableKeepAlive: true,
-  keepAliveInitialDelay: 10000 // survives TiDB's 340s idle cutoff better
+  keepAliveInitialDelay: 10000
 });
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -127,12 +126,14 @@ const genreMap = {
   28: 'Action', 12: 'Adventure', 16: 'Animation', 35: 'Comedy', 80: 'Crime',
   99: 'Documentary', 18: 'Drama', 10751: 'Family', 14: 'Fantasy', 36: 'History',
   27: 'Horror', 10402: 'Music', 9648: 'Mystery', 10749: 'Romance', 878: 'Sci-Fi',
-  10770: 'TV Movie', 53: 'Thriller', 10752: 'War', 37: 'Western'
+  10770: 'TV Movie', 53: 'Thriller', 10752: 'War', 37: 'Western',
+  // TV-specific genres TMDB uses on /discover/tv
+  10759: 'Action & Adventure', 10762: 'Kids', 10763: 'News',
+  10764: 'Reality', 10765: 'Sci-Fi & Fantasy', 10766: 'Soap', 10767: 'Talk', 10768: 'War & Politics'
 };
 
-const tableMap = { movies: 'movies_cache', series: 'series_cache', anime: 'anime_cache' };
+const tableMap = { movies: 'movies_cache', series: 'series_cache' };
 
-/* Human-readable DB errors for the frontend */
 function classifyDbError(err) {
   const code = err && err.code;
   const m = (err && err.message) || '';
@@ -147,7 +148,7 @@ function classifyDbError(err) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   SCHEMA BOOTSTRAP (self-healing, lazy, race-safe)
+   SCHEMA BOOTSTRAP + ANIME → SERIES MIGRATION
    ═══════════════════════════════════════════════════════════ */
 let schemaReady = false;
 
@@ -174,6 +175,21 @@ async function ensureSchema() {
     )`);
   }
 
+  // ── ONE-TIME MIGRATION ──
+  // Old installs had anime_cache. Fold those entries into series_cache
+  // (TMDB treats anime as TV anyway), then drop the table. No data lost.
+  try {
+    const [r] = await pool.query(`
+      INSERT IGNORE INTO series_cache (tmdb_id, title, release_date, rating, genre, poster, backdrop, overview)
+      SELECT tmdb_id, title, release_date, rating, genre, poster, backdrop, overview FROM anime_cache
+    `);
+    if (r.affectedRows > 0) {
+      console.log(`✓ Migrated ${r.affectedRows} anime entries into series_cache`);
+      apiCache.clear();
+    }
+    await pool.query('DROP TABLE IF EXISTS anime_cache');
+  } catch (e) { /* anime_cache doesn't exist — fresh install, fine */ }
+
   // Seed a guaranteed login if table is empty
   const [[{ c }]] = await pool.query('SELECT COUNT(*) AS c FROM users');
   if (c === 0) {
@@ -185,7 +201,7 @@ async function ensureSchema() {
     } catch (e) { /* concurrent race — fine */ }
   }
 
-  // Env override ALWAYS guarantees a known login, even over existing rows
+  // Env override ALWAYS guarantees a known login
   if (process.env.ADMIN_USER && process.env.ADMIN_PASS) {
     await pool.query(
       'INSERT INTO users (username, password) VALUES (?, ?) ON DUPLICATE KEY UPDATE password = VALUES(password)',
@@ -202,7 +218,7 @@ async function bootDb() {
     try {
       await pool.query('SELECT 1');
       await ensureSchema();
-      console.log('✓ Database connected & schema ready');
+      console.log('✓ Database connected & schema ready (movies + series)');
       return;
     } catch (e) {
       console.error(`✗ DB init attempt ${i}/3 failed: ${classifyDbError(e)}`);
@@ -211,7 +227,7 @@ async function bootDb() {
   }
   console.error('✗ Database NOT ready at boot — login attempts will retry automatically.');
 }
-bootDb(); // non-blocking: server starts even if DB is briefly down
+bootDb();
 
 /* ═══════════════════════════════════════════════════════════
    HEALTH / DIAGNOSTICS
@@ -249,7 +265,7 @@ app.get('/api/health', async (req, res) => {
   } catch (err) {
     out.dbError = classifyDbError(err);
   }
-  res.json(out); // always 200 so Render health checks don't kill the service while debugging
+  res.json(out);
 });
 
 /* ═══════════════════════════════════════════════════════════
@@ -261,7 +277,7 @@ app.post('/api/login', loginLimiter, async (req, res) => {
     return res.status(400).json({ success: false, error: 'bad_request', message: 'Enter both username and password.' });
   }
   try {
-    await ensureSchema(); // lazy self-heal: works even if boot-time init failed
+    await ensureSchema();
     const [rows] = await pool.query(
       'SELECT id FROM users WHERE username = ? AND password = ? LIMIT 1',
       [username, password]
@@ -279,7 +295,10 @@ app.post('/api/login', loginLimiter, async (req, res) => {
 });
 
 /* ═══════════════════════════════════════════════════════════
-   TMDB SYNC ENGINE
+   TMDB SYNC ENGINE — exactly two categories:
+   /discover/movie → movies_cache
+   /discover/tv    → series_cache  (anime included automatically,
+                     because TMDB classifies anime as TV)
    ═══════════════════════════════════════════════════════════ */
 let syncState = { isSyncing: false, currentPage: 0, totalItems: 0, category: 'idle' };
 
@@ -296,7 +315,6 @@ app.get('/api/start-sync', async (req, res) => {
   if (syncState.isSyncing) return res.json({ msg: 'Already syncing', ...syncState });
   try {
     await ensureSchema();
-    // start counting from what's already in the DB
     let total = 0;
     for (const t of Object.values(tableMap)) {
       const [[row]] = await pool.query(`SELECT COUNT(*) AS c FROM ${t}`);
@@ -325,10 +343,6 @@ async function runSync() {
     {
       name: 'series',
       url: `${TMDB_BASE}/discover/tv?api_key=${TMDB_KEY}&sort_by=first_air_date.desc&include_adult=false&first_air_date.lte=${today}&page=`
-    },
-    {
-      name: 'anime',
-      url: `${TMDB_BASE}/discover/tv?api_key=${TMDB_KEY}&with_genres=16&with_original_language=ja&sort_by=first_air_date.desc&include_adult=false&first_air_date.lte=${today}&page=`
     }
   ];
 
@@ -339,7 +353,7 @@ async function runSync() {
       const tableName = tableMap[category.name];
       let page = 1, hasMore = true;
 
-      while (hasMore && syncState.isSyncing && page <= 10) { // cap: 10 pages/category per run
+      while (hasMore && syncState.isSyncing && page <= 10) {
         let response;
         try {
           response = await fetchWithRetry(`${category.url}${page}`);
@@ -352,7 +366,7 @@ async function runSync() {
         const items = response.data.results || [];
         if (!items.length) { hasMore = false; break; }
 
-        // Early-stop: newest-first ordering means a fully cached page = nothing new
+        // Early-stop: newest-first means a fully cached page = nothing new
         const pageIds = items.map(m => m.id).filter(Boolean);
         if (pageIds.length) {
           const [existing] = await pool.query(
@@ -374,8 +388,8 @@ async function runSync() {
                ON DUPLICATE KEY UPDATE tmdb_id = tmdb_id`,
               [
                 m.id,
-                m.title || m.name || 'Untitled',
-                m.release_date || m.first_air_date || null,
+                m.title || m.name || 'Untitled',          // movies use .title, tv uses .name
+                m.release_date || m.first_air_date || null, // same mapping
                 m.vote_average || 0,
                 genreId ? (genreMap[genreId] || 'Unknown') : 'Unknown',
                 m.poster_path ? `https://image.tmdb.org/t/p/w342${m.poster_path}` : null,
@@ -392,12 +406,11 @@ async function runSync() {
         await sleep(page % 20 === 0 ? 10000 : 300);
       }
     }
-    console.log('✓ TMDB sync finished.');
+    console.log('✓ TMDB sync finished (movies + series).');
   } catch (err) {
     console.error('Sync crashed:', err.message);
   } finally {
     syncState.isSyncing = false;
-    // invalidate the catalog cache so fresh items appear immediately
     apiCache.clear();
   }
 }
@@ -406,8 +419,7 @@ async function runSync() {
    CATALOG (≤ 2 years old, released, with poster)
    ═══════════════════════════════════════════════════════════ */
 app.get('/api/movies', async (req, res) => {
-  const cacheKey = 'movies_catalog';
-  const cached = apiCache.get(cacheKey);
+  const cached = apiCache.get('movies_catalog');
   if (cached) return res.json(cached);
 
   try {
@@ -417,21 +429,17 @@ app.get('/api/movies', async (req, res) => {
     const today = new Date().toISOString().slice(0, 10);
 
     const query = `
-      SELECT 'films' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview
+      SELECT 'movies' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview
       FROM movies_cache
       WHERE release_date >= ? AND release_date <= ? AND poster IS NOT NULL AND poster <> ''
       UNION ALL
       SELECT 'series' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview
       FROM series_cache
       WHERE release_date >= ? AND release_date <= ? AND poster IS NOT NULL AND poster <> ''
-      UNION ALL
-      SELECT 'anime' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview
-      FROM anime_cache
-      WHERE release_date >= ? AND release_date <= ? AND poster IS NOT NULL AND poster <> ''
       ORDER BY rating DESC LIMIT 500`;
 
-    const [rows] = await pool.query(query, [minDate, today, minDate, today, minDate, today]);
-    apiCache.set(cacheKey, rows, CACHE_TTL.movies);
+    const [rows] = await pool.query(query, [minDate, today, minDate, today]);
+    apiCache.set('movies_catalog', rows, CACHE_TTL.movies);
     res.json(rows);
   } catch (err) {
     console.error('movies:', err.message);
@@ -452,17 +460,14 @@ app.get('/api/movie/:id', async (req, res) => {
     if (cached) return res.json(cached);
 
     const query = `
-      SELECT 'films' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview
+      SELECT 'movies' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview
       FROM movies_cache WHERE tmdb_id = ?
       UNION ALL
       SELECT 'series' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview
       FROM series_cache WHERE tmdb_id = ?
-      UNION ALL
-      SELECT 'anime' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview
-      FROM anime_cache WHERE tmdb_id = ?
       LIMIT 1`;
 
-    const [rows] = await pool.query(query, [id, id, id]);
+    const [rows] = await pool.query(query, [id, id]);
     if (rows.length) {
       apiCache.set(cacheKey, rows[0], CACHE_TTL.movie);
       res.json(rows[0]);
@@ -475,7 +480,7 @@ app.get('/api/movie/:id', async (req, res) => {
 });
 
 /* ═══════════════════════════════════════════════════════════
-   SEARCH (entire DB, case-insensitive, injection-safe)
+   SEARCH
    ═══════════════════════════════════════════════════════════ */
 app.get('/api/search', async (req, res) => {
   const q = (req.query.q || '').trim();
@@ -488,17 +493,14 @@ app.get('/api/search', async (req, res) => {
   try {
     await ensureSchema();
     const query = `
-      SELECT 'films' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview
+      SELECT 'movies' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview
       FROM movies_cache WHERE INSTR(LOWER(title), LOWER(?)) > 0
       UNION ALL
       SELECT 'series' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview
       FROM series_cache WHERE INSTR(LOWER(title), LOWER(?)) > 0
-      UNION ALL
-      SELECT 'anime' AS type, tmdb_id AS id, title, release_date, rating, genre, poster, backdrop, overview
-      FROM anime_cache WHERE INSTR(LOWER(title), LOWER(?)) > 0
       ORDER BY rating DESC LIMIT 24`;
 
-    const [rows] = await pool.query(query, [q, q, q]);
+    const [rows] = await pool.query(query, [q, q]);
     apiCache.set(cacheKey, rows, CACHE_TTL.search);
     res.json(rows);
   } catch (err) {
@@ -508,7 +510,7 @@ app.get('/api/search', async (req, res) => {
 });
 
 /* ═══════════════════════════════════════════════════════════
-   CATEGORIES (genres present in the DB)
+   CATEGORIES (genres present in both tables)
    ═══════════════════════════════════════════════════════════ */
 app.get('/api/categories', async (req, res) => {
   const cached = apiCache.get('categories');
@@ -520,7 +522,6 @@ app.get('/api/categories', async (req, res) => {
       SELECT genre AS id, genre AS name FROM (
         SELECT genre FROM movies_cache
         UNION SELECT genre FROM series_cache
-        UNION SELECT genre FROM anime_cache
       ) g
       WHERE genre IS NOT NULL AND genre <> '' AND genre <> 'Unknown'
       ORDER BY name`);
@@ -533,21 +534,18 @@ app.get('/api/categories', async (req, res) => {
 });
 
 /* ═══════════════════════════════════════════════════════════
-   TYPE DETECTION HELPER
+   TYPE DETECTION — returns 'movies' | 'series' | null
    ═══════════════════════════════════════════════════════════ */
 async function getItemType(id) {
-  const [films] = await pool.query('SELECT tmdb_id FROM movies_cache WHERE tmdb_id = ? LIMIT 1', [id]);
-  if (films.length) return 'films';
+  const [movies] = await pool.query('SELECT tmdb_id FROM movies_cache WHERE tmdb_id = ? LIMIT 1', [id]);
+  if (movies.length) return 'movies';
   const [series] = await pool.query('SELECT tmdb_id FROM series_cache WHERE tmdb_id = ? LIMIT 1', [id]);
   if (series.length) return 'series';
-  const [anime] = await pool.query('SELECT tmdb_id FROM anime_cache WHERE tmdb_id = ? LIMIT 1', [id]);
-  if (anime.length) return 'anime';
   return null;
 }
 
 /* ═══════════════════════════════════════════════════════════
-   SOURCES (embed URLs — PrimeSrc, CineSrc, VidSrc, VidLink,
-   Embed.su, FilmU … managed in sources.js)
+   SOURCES (embed URLs)
    ═══════════════════════════════════════════════════════════ */
 app.get('/api/sources', async (req, res) => {
   try {
@@ -560,12 +558,15 @@ app.get('/api/sources', async (req, res) => {
     const cached = apiCache.get(cacheKey);
     if (cached) return res.json(cached);
 
+    // Normalize: accept legacy values too
     let type = (req.query.type || '').toLowerCase();
-    if (!['films', 'movies', 'series', 'anime'].includes(type)) {
-      type = (await getItemType(id)) || 'films';
+    if (type === 'films' || type === 'film' || type === 'movie') type = 'movies';
+    if (type === 'tv' || type === 'anime') type = 'series';
+    if (!['movies', 'series'].includes(type)) {
+      type = (await getItemType(id)) || 'movies';
     }
 
-    const isTV = type === 'series' || type === 'anime';
+    const isTV = type === 'series';
     const list = isTV ? getEnabledSeriesSources() : getEnabledMovieSources();
 
     const sources = list.map(s => ({
@@ -584,7 +585,7 @@ app.get('/api/sources', async (req, res) => {
 });
 
 /* ═══════════════════════════════════════════════════════════
-   SEASONS (TMDB)
+   SEASONS (TMDB /tv — only meaningful for series)
    ═══════════════════════════════════════════════════════════ */
 app.get('/api/seasons/:id', async (req, res) => {
   const id = parseInt(req.params.id);
@@ -607,7 +608,7 @@ app.get('/api/seasons/:id', async (req, res) => {
 });
 
 /* ═══════════════════════════════════════════════════════════
-   CREDITS (cast + runtime — used by the detail page)
+   CREDITS (cast + runtime) — TMDB 'movie' or 'tv'
    ═══════════════════════════════════════════════════════════ */
 app.get('/api/credits/:id', async (req, res) => {
   const id = parseInt(req.params.id);
@@ -618,13 +619,13 @@ app.get('/api/credits/:id', async (req, res) => {
   if (cached) return res.json(cached);
 
   try {
-    const type = (await getItemType(id)) === 'films' ? 'movie' : 'tv';
+    const t = (await getItemType(id)) === 'series' ? 'tv' : 'movie';
     const r = await axios.get(
-      `${TMDB_BASE}/${type}/${id}?api_key=${TMDB_KEY}&append_to_response=credits`,
+      `${TMDB_BASE}/${t}/${id}?api_key=${TMDB_KEY}&append_to_response=credits`,
       { timeout: 12000 }
     );
     const d = r.data || {};
-    const runtime = type === 'movie'
+    const runtime = t === 'movie'
       ? (d.runtime || 0)
       : ((d.episode_run_time && d.episode_run_time[0]) || 0);
     const out = {
@@ -638,12 +639,12 @@ app.get('/api/credits/:id', async (req, res) => {
     apiCache.set(cacheKey, out, CACHE_TTL.credits);
     res.json(out);
   } catch (err) {
-    res.json({ cast: [], runtime: 0 }); // graceful: detail page hides cast section
+    res.json({ cast: [], runtime: 0 });
   }
 });
 
 /* ═══════════════════════════════════════════════════════════
-   WATCH PROVIDERS (legal "Also Available On" links via TMDB)
+   WATCH PROVIDERS
    ═══════════════════════════════════════════════════════════ */
 app.get('/api/providers', async (req, res) => {
   const id = parseInt(req.query.id);
@@ -655,16 +656,16 @@ app.get('/api/providers', async (req, res) => {
   if (cached) return res.json(cached);
 
   try {
-    const type = (await getItemType(id)) === 'films' ? 'movie' : 'tv';
+    const t = (await getItemType(id)) === 'series' ? 'tv' : 'movie';
     const r = await axios.get(
-      `${TMDB_BASE}/${type}/${id}/watch/providers?api_key=${TMDB_KEY}`,
+      `${TMDB_BASE}/${t}/${id}/watch/providers?api_key=${TMDB_KEY}`,
       { timeout: 12000 }
     );
     const out = { link_country: region, results: (r.data && r.data.results) || {} };
     apiCache.set(cacheKey, out, CACHE_TTL.providers);
     res.json(out);
   } catch (err) {
-    res.json({ link_country: region, results: {} }); // graceful: section stays empty
+    res.json({ link_country: region, results: {} });
   }
 });
 
@@ -683,6 +684,6 @@ app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🔥 Z-Stream listening on port ${PORT}`);
+  console.log(`🔥 Z-Stream listening on port ${PORT} — Movies + Series`);
   console.log(`📊 Health check: http://localhost:${PORT}/api/health`);
 });
